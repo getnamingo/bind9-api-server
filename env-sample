@@ -1,0 +1,5 @@
+# .env
+BIND9_ZONE_DIR=/etc/bind/zones
+BIND9_CONF_FILE=/etc/bind/named.conf.local
+JWT_SECRET=your_secret_key
+DEBUG_MODE=true # Set to 'false' in production

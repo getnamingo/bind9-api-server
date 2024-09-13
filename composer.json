@@ -1,0 +1,16 @@
+{
+    "name": "namingo/bind9-api-server",
+    "description": "The bind9-api-server provides a RESTful interface to manage BIND9 DNS zones and records.",
+    "type": "project",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "Namingo"
+        }
+    ],
+    "require": {
+        "badcow/dns": "^4.3",
+        "firebase/php-jwt": "^6.10",
+        "vlucas/phpdotenv": "^5.6"
+    }
+}
