@@ -358,7 +358,6 @@ function handleGetRecords($zoneName) {
     $records = [];
     foreach ($zone->getResourceRecords() as $record) {
         $records[] = [
-            'id' => spl_object_hash($record),
             'name' => $record->getName(),
             'type' => $record->getType(),
             'ttl' => $record->getTtl(),
@@ -474,7 +473,14 @@ function handleAddRecord($zoneName, $request) {
     return [201, ['message' => 'Record added successfully']];
 }
 
-function handleUpdateRecord($zoneName, $recordId, $request) {
+/**
+ * Handle updating an existing DNS record.
+ *
+ * @param string $zoneName The name of the DNS zone.
+ * @param Swoole\Http\Request $request The HTTP request containing update details.
+ * @return array [status_code, response_body]
+ */
+function handleUpdateRecord($zoneName, $request) {
     try {
         $zone = loadZone($zoneName);
     } catch (Exception $e) {
@@ -482,72 +488,173 @@ function handleUpdateRecord($zoneName, $recordId, $request) {
     }
 
     $body = json_decode($request->rawContent(), true);
-    $name = $body['name'] ?? '';
-    $type = strtoupper($body['type'] ?? '');
-    $ttl = $body['ttl'] ?? 3600;
-    $rdata = $body['rdata'] ?? '';
 
-    // Find the record by ID
-    $found = false;
+    // Extract identifying information for the record to be updated
+    $currentName = trim($body['current_name'] ?? '');
+    $currentType = strtoupper(trim($body['current_type'] ?? ''));
+    $currentRdata = trim($body['current_rdata'] ?? '');
+
+    // Extract new data for the record
+    $newName = trim($body['new_name'] ?? $currentName);
+    $newTtl = isset($body['new_ttl']) ? intval($body['new_ttl']) : 3600;
+    $newRdata = trim($body['new_rdata'] ?? $currentRdata);
+    $newComment = trim($body['new_comment'] ?? '');
+
+    if (!$currentName || !$currentType || !$currentRdata) {
+        return [400, ['error' => 'Current record name, type, and rdata are required for identification']];
+    }
+
+    // Find the record by current_name, current_type, and current_rdata
+    $recordToUpdate = null;
     foreach ($zone->getResourceRecords() as $record) {
-        if (spl_object_hash($record) === $recordId) {
-            if ($name) $record->setName($name);
-            if ($type) $record->setType($type);
-            if ($ttl) $record->setTtl($ttl);
-            if ($rdata) {
-                try {
-                    $rdataClass = 'Badcow\DNS\Rdata\\' . ucfirst(strtolower($type));
-                    if (!class_exists($rdataClass)) {
-                        return [400, ['error' => 'Unsupported record type']];
-                    }
-                    $record->setRdata(new $rdataClass($rdata));
-                } catch (Exception $e) {
-                    return [400, ['error' => 'Invalid RDATA: ' . $e->getMessage()]];
-                }
-            }
-            $found = true;
+        if (
+            strtolower($record->getName()) === strtolower($currentName) &&
+            strtoupper($record->getType()) === strtoupper($currentType) &&
+            strtolower($record->getRdata()->toText()) === strtolower($currentRdata)
+        ) {
+            $recordToUpdate = $record;
             break;
         }
     }
 
-    if (!$found) {
+    if (!$recordToUpdate) {
         return [404, ['error' => 'Record not found']];
     }
 
-    saveZone($zone);
-    reloadBIND9();
+    // Update the record with new values
+    if ($newName) {
+        $recordToUpdate->setName($newName);
+    }
+    if ($newTtl) {
+        $recordToUpdate->setTtl($newTtl);
+    }
+    if ($newRdata) {
+        // Dynamically create Rdata based on type
+        try {
+            // Mapping record types to Factory methods
+            $factoryMethods = [
+                'A' => 'A',
+                'AAAA' => 'AAAA',
+                'CNAME' => 'CNAME',
+                'MX' => 'MX',
+                'NS' => 'NS',
+                'PTR' => 'PTR',
+                'SOA' => 'SOA',
+                'TXT' => 'TXT',
+            ];
+            $normalizedType = strtoupper($currentType);
+            if (!isset($factoryMethods[$normalizedType])) {
+                return [400, ['error' => 'Unsupported record type']];
+            }
+            $methodName = $factoryMethods[$normalizedType];
+            $rdataInstance = \Badcow\DNS\Rdata\Factory::$methodName($newRdata);
+            $record->setRdata($rdataInstance);
+        } catch (Exception $e) {
+            return [400, ['error' => 'Invalid RDATA: ' . $e->getMessage()]];
+        }
+    }
+    if ($newComment) {
+        $recordToUpdate->setComment($newComment);
+    }
+
+    // Save the updated zone
+    try {
+        saveZone($zone);
+    } catch (Exception $e) {
+        return [500, ['error' => 'Failed to save updated zone: ' . $e->getMessage()]];
+    }
+
+    // Reload BIND9 to apply changes
+    try {
+        reloadBIND9();
+    } catch (Exception $e) {
+        return [500, ['error' => 'Failed to reload BIND9: ' . $e->getMessage()]];
+    }
 
     return [200, ['message' => 'Record updated successfully']];
 }
 
-function handleDeleteRecord($zoneName, $recordId) {
+/**
+ * Handle deleting an existing DNS record.
+ *
+ * @param string $zoneName The name of the DNS zone.
+ * @param Swoole\Http\Request $request The HTTP request containing deletion details.
+ * @return array [status_code, response_body]
+ */
+function handleDeleteRecord($zoneName, $request) {
     try {
         $zone = loadZone($zoneName);
     } catch (Exception $e) {
         return [404, ['error' => $e->getMessage()]];
     }
 
-    $found = false;
-    foreach ($zone->getResourceRecords() as $key => $record) {
-        if (spl_object_hash($record) === $recordId) {
-            $zone->removeRecord($record);
-            $found = true;
+    $body = json_decode($request->rawContent(), true);
+
+    // Extract identifying information for the record to be deleted
+    $recordName = trim($body['name'] ?? '');
+    $recordType = strtoupper(trim($body['type'] ?? ''));
+    $recordRdata = trim($body['rdata'] ?? '');
+
+    if (!$recordName || !$recordType || !$recordRdata) {
+        return [400, ['error' => 'Record name, type, and rdata are required for identification']];
+    }
+
+    // Find the record by name, type, and rdata
+    $recordToDelete = null;
+    foreach ($zone->getResourceRecords() as $record) {
+        if (
+            strtolower($record->getName()) === strtolower($recordName) &&
+            strtoupper($record->getType()) === strtoupper($recordType) &&
+            strtolower($record->getRdata()->toText()) === strtolower($recordRdata)
+        ) {
+            $recordToDelete = $record;
             break;
         }
     }
 
-    if (!$found) {
+    if (!$recordToDelete) {
         return [404, ['error' => 'Record not found']];
     }
 
-    saveZone($zone);
-    reloadBIND9();
+    // Remove the record from the zone
+    $zone->remove($recordToDelete);
+
+    // Save the updated zone
+    try {
+        saveZone($zone);
+    } catch (Exception $e) {
+        return [500, ['error' => 'Failed to save updated zone: ' . $e->getMessage()]];
+    }
+
+    // Reload BIND9 to apply changes
+    try {
+        reloadBIND9();
+    } catch (Exception $e) {
+        return [500, ['error' => 'Failed to reload BIND9: ' . $e->getMessage()]];
+    }
 
     return [200, ['message' => 'Record deleted successfully']];
 }
 
 // Initialize Swoole HTTP Server
 $server = new Server("0.0.0.0", 9501);
+$server->set([
+    'daemonize' => false,
+    'log_file' => '/var/log/namingo/bind9-api.log',
+    'log_level' => SWOOLE_LOG_INFO,
+    'worker_num' => swoole_cpu_num() * 2,
+    'pid_file' => '/var/run/bind9-api.pid',
+    'max_request' => 1000,
+    'dispatch_mode' => 1,
+    'open_tcp_nodelay' => true,
+    'max_conn' => 1024,
+    'buffer_output_size' => 2 * 1024 * 1024,  // 2MB
+    'heartbeat_check_interval' => 60,
+    'heartbeat_idle_time' => 600,  // 10 minutes
+    'package_max_length' => 2 * 1024 * 1024,  // 2MB
+    'reload_async' => true,
+    'http_compression' => true
+]);
 
 $server->on("start", function ($server) {
     echo "Swoole HTTP server started at http://127.0.0.1:9501\n";
@@ -623,12 +730,12 @@ $server->on("request", function (Request $request, Response $response) {
         $zoneName = $matches[1];
         $recordId = $matches[2];
         if ($method === 'PUT') {
-            list($status, $body) = handleUpdateRecord($zoneName, $recordId, $request);
+            list($status, $body) = handleUpdateRecord($zoneName, $request);
             $response->status($status);
             $response->end(json_encode($body));
             return;
         } elseif ($method === 'DELETE') {
-            list($status, $body) = handleDeleteRecord($zoneName, $recordId);
+            list($status, $body) = handleDeleteRecord($zoneName, $request);
             $response->status($status);
             $response->end(json_encode($body));
             return;
