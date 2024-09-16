@@ -233,3 +233,91 @@ After that you can manage BIND9 API via systemctl as any other service. Finally,
 ```bash
 systemctl restart caddy
 ```
+
+## (Optional) 10. Install BIND9:
+
+If needed, here is how to install BIND9.
+
+### 10.1. Setting your hostname
+
+```bash
+hostnamectl set-hostname your.hostname.com
+```
+
+Edit the file and add your IP and hostname as in the example below:
+
+```bash
+nano /etc/hosts
+```
+
+```bash
+192.0.2.10   your.hostname.com bind
+```
+
+### 10.2. Install BIND9
+
+Install BIND9 and related utilities:
+
+```bash
+apt install bind9 bind9utils bind9-doc dnsutils -y
+```
+
+It's good practice to back up the original BIND9 configuration files before making changes.
+
+```bash
+cp /etc/bind/named.conf.options /etc/bind/named.conf.options.backup
+cp /etc/bind/named.conf.local /etc/bind/named.conf.local.backup
+```
+
+Edit the `named.conf.options` file to set up general options.
+
+```bash
+nano /etc/bind/named.conf.options
+```
+
+Replace its contents with the following:
+
+```bash
+options {
+    directory "/var/cache/bind";
+
+    // Allow queries from any IP
+    allow-query { any; };
+
+    // Listen on all interfaces
+    listen-on { any; };
+    listen-on-v6 { any; };
+
+    // Enable DNSSEC validation
+    dnssec-validation auto;
+
+    auth-nxdomain no;    # conform to RFC1035
+    listen-on port 53 { any; };
+};
+```
+
+Create the zones directory if it doesn't exist:
+
+```bash
+mkdir -p /etc/bind/zones
+```
+
+Before restarting BIND9, verify the configuration:
+
+```bash
+sudo named-checkconf
+```
+
+If you are using UFW (Uncomplicated Firewall), execute the following commands:
+
+```bash
+ufw allow 53/tcp
+ufw allow 53/udp
+```
+
+Enable BIND9 to start on boot and start the service:
+
+```bash
+systemctl enable bind9
+systemctl start bind9
+```
