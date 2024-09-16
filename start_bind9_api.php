@@ -305,12 +305,12 @@ function handleAddRecord($zoneName, $request) {
                         return [400, ['error' => 'Record already exists']];
                     }
                     break;
+                case 'SPF':
                 case 'TXT':
                     if ($existingRecord->getRdata()->getText() === $rdata) {
                         return [400, ['error' => 'Record already exists']];
                     }
                     break;
-                // Add additional cases for other record types as needed
                 default:
                     return [400, ['error' => 'Unsupported record type']];
             }
@@ -337,6 +337,8 @@ function handleAddRecord($zoneName, $request) {
             'PTR' => 'PTR',
             'SOA' => 'SOA',
             'TXT' => 'TXT',
+            'SPF' => 'SPF',
+            'DS' => 'DS',
         ];
         $normalizedType = strtoupper($type);
         if (!isset($factoryMethods[$normalizedType])) {
@@ -431,13 +433,21 @@ function handleUpdateRecord($zoneName, $request) {
                 'PTR' => 'PTR',
                 'SOA' => 'SOA',
                 'TXT' => 'TXT',
+                'SPF' => 'SPF',
+                'DS' => 'DS',
             ];
             $normalizedType = strtoupper($currentType);
             if (!isset($factoryMethods[$normalizedType])) {
                 return [400, ['error' => 'Unsupported record type']];
             }
             $methodName = $factoryMethods[$normalizedType];
-            $rdataInstance = \Badcow\DNS\Rdata\Factory::$methodName($newRdata);
+            if ($type === 'MX') {
+                $preference = $newRdata['preference'];
+                $exchange = $newRdata['exchange'];
+                $rdataInstance = \Badcow\DNS\Rdata\Factory::MX($preference, $exchange);
+            } else {
+                $rdataInstance = \Badcow\DNS\Rdata\Factory::$methodName($newRdata);
+            }
             $record->setRdata($rdataInstance);
         } catch (Exception $e) {
             return [400, ['error' => 'Invalid RDATA: ' . $e->getMessage()]];
