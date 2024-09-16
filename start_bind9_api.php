@@ -343,7 +343,13 @@ function handleAddRecord($zoneName, $request) {
             return [400, ['error' => 'Unsupported record type']];
         }
         $methodName = $factoryMethods[$normalizedType];
-        $rdataInstance = \Badcow\DNS\Rdata\Factory::$methodName($rdata);
+        if ($type === 'MX') {
+            $preference = $rdata['preference'];
+            $exchange = $rdata['exchange'];
+            $rdataInstance = \Badcow\DNS\Rdata\Factory::MX($preference, $exchange);
+        } else {
+            $rdataInstance = \Badcow\DNS\Rdata\Factory::$methodName($rdata);
+        }
         $record->setRdata($rdataInstance);
     } catch (Exception $e) {
         return [400, ['error' => 'Invalid RDATA: ' . $e->getMessage()]];
