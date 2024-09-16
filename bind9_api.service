@@ -1,0 +1,19 @@
+[Unit]
+Description=BIND9 API Server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+Restart=on-failure
+ExecStart=/usr/bin/php /opt/bind9_api/start_bind9_api.php
+ExecReload=/bin/kill -HUP $MAINPID
+ExecStop=/bin/kill -INT $MAINPID
+WorkingDirectory=/opt/bind9_api
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=bind9api
+
+[Install]
+WantedBy=multi-user.target

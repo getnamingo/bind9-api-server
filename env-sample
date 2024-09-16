@@ -1,5 +1,50 @@
 # .env
+
+# Debug mode for the application. Set to 'false' in production to disable detailed error messages.
+DEBUG_MODE=true 
+
+# Directory where BIND9 stores zone files. Ensure this path is writable by the application user.
 BIND9_ZONE_DIR=/etc/bind/zones
+
+# Path to the BIND9 configuration file that includes the zone declarations. Modify if using a different config structure.
 BIND9_CONF_FILE=/etc/bind/named.conf.local
-JWT_SECRET=your_secret_key
-DEBUG_MODE=true # Set to 'false' in production
+
+# Email address used in the SOA (Start of Authority) record. Must be in the format: 'hostmaster.example.com.' with a trailing dot.
+SOA_EMAIL=hostmaster.example.com.
+
+# SOA record timing parameters:
+# Time (in seconds) before the zone should be refreshed.
+REFRESH=7200
+# Time (in seconds) to wait before retrying a failed refresh.
+RETRY=3600
+# Time (in seconds) before the zone is considered expired.
+EXPIRE=1209600
+# Minimum TTL (in seconds) for cached resource records in the zone.
+MIN_TTL=86400
+
+# List of name servers (NS) for the zone. Add up to NS13 if needed.
+NS1=ns1.example.com.
+NS2=ns2.example.com.
+# NS3=ns3.example.com.
+# Continue adding NS records up to NS13, as needed...
+
+# Database connection settings for the application:
+# Database type (e.g., mysql).
+DB_TYPE=mysql
+# Hostname of the database server. Use 'localhost' if running on the same server.
+DB_HOST=localhost
+# Port number for the database server. Default is 3306 for MySQL.
+DB_PORT=3306
+# Name of the database to connect to.
+DB_DATABASE=bind9_api
+# Database user credentials. Replace with appropriate values.
+DB_USERNAME=your_username
+DB_PASSWORD=your_password
+
+# Rate limiting settings for the API:
+# Enable or disable rate limiting. Set to 'true' to enable, 'false' to disable.
+RATELY=false
+# Maximum number of requests allowed during the specified period.
+RATE_LIMIT=1000
+# Time period (in seconds) for rate limiting. Default is 60 seconds.
+RATE_PERIOD=60

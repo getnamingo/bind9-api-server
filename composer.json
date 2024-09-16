@@ -10,7 +10,8 @@
     ],
     "require": {
         "badcow/dns": "^4.3",
-        "firebase/php-jwt": "^6.10",
-        "vlucas/phpdotenv": "^5.6"
+        "vlucas/phpdotenv": "^5.6",
+        "monolog/monolog": "^3.7",
+        "namingo/rately": "^0.1.0"
     }
 }
