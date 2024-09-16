@@ -311,6 +311,14 @@ function handleAddRecord($zoneName, $request) {
                         return [400, ['error' => 'Record already exists']];
                     }
                     break;
+                case 'DS':
+                    if ($existingRecord->getRdata()->getKeyTag() == $rdata['keytag'] &&
+                        $existingRecord->getRdata()->getAlgorithm() == $rdata['algorithm'] &&
+                        $existingRecord->getRdata()->getDigestType() == $rdata['digestType'] &&
+                        $existingRecord->getRdata()->getDigest() === $rdata['digest']) {
+                        return [400, ['error' => 'Record already exists']];
+                    }
+                    break;
                 default:
                     return [400, ['error' => 'Unsupported record type']];
             }
@@ -349,6 +357,12 @@ function handleAddRecord($zoneName, $request) {
             $preference = $rdata['preference'];
             $exchange = $rdata['exchange'];
             $rdataInstance = \Badcow\DNS\Rdata\Factory::MX($preference, $exchange);
+        } else if ($type === 'DS') {
+            $keytag = $rdata['keytag'];
+            $algorithm = $rdata['algorithm'];
+            $digestType = $rdata['digestType'];
+            $digest = $rdata['digest'];
+            $rdataInstance = \Badcow\DNS\Rdata\Factory::DS($keytag, $algorithm, hex2bin($digest), $digestType);
         } else {
             $rdataInstance = \Badcow\DNS\Rdata\Factory::$methodName($rdata);
         }
@@ -441,10 +455,16 @@ function handleUpdateRecord($zoneName, $request) {
                 return [400, ['error' => 'Unsupported record type']];
             }
             $methodName = $factoryMethods[$normalizedType];
-            if ($type === 'MX') {
+            if ($currentType === 'MX') {
                 $preference = $newRdata['preference'];
                 $exchange = $newRdata['exchange'];
                 $rdataInstance = \Badcow\DNS\Rdata\Factory::MX($preference, $exchange);
+            } else if ($currentType === 'DS') {
+                $keytag = $newRdata['keytag'];
+                $algorithm = $newRdata['algorithm'];
+                $digestType = $newRdata['digestType'];
+                $digest = $newRdata['digest'];
+                $rdataInstance = \Badcow\DNS\Rdata\Factory::DS($keytag, $algorithm, hex2bin($digest), $digestType);
             } else {
                 $rdataInstance = \Badcow\DNS\Rdata\Factory::$methodName($newRdata);
             }
@@ -493,7 +513,11 @@ function handleDeleteRecord($zoneName, $request) {
     // Extract identifying information for the record to be deleted
     $recordName = trim($body['name'] ?? '');
     $recordType = strtoupper(trim($body['type'] ?? ''));
-    $recordRdata = trim($body['rdata'] ?? '');
+    if ($recordType === 'DS' || $recordType === 'MX') {
+        $recordRdata = $body['rdata'] ?? '';
+    } else {
+        $recordRdata = trim($body['rdata'] ?? '');
+    }
 
     if (!$recordName || !$recordType || !$recordRdata) {
         return [400, ['error' => 'Record name, type, and rdata are required for identification']];
@@ -504,11 +528,32 @@ function handleDeleteRecord($zoneName, $request) {
     foreach ($zone->getResourceRecords() as $record) {
         if (
             strtolower($record->getName()) === strtolower($recordName) &&
-            strtoupper($record->getType()) === strtoupper($recordType) &&
-            strtolower($record->getRdata()->toText()) === strtolower($recordRdata)
+            strtoupper($record->getType()) === strtoupper($recordType)
         ) {
-            $recordToDelete = $record;
-            break;
+            // Handle DS record comparison
+            if ($recordType === 'DS') {
+                $dsRecord = $record->getRdata();
+                if ($dsRecord->getKeyTag() == $recordRdata['keytag'] &&
+                    $dsRecord->getAlgorithm() == $recordRdata['algorithm'] &&
+                    $dsRecord->getDigestType() == $recordRdata['digestType'] &&
+                    $dsRecord->getDigest() === $recordRdata['digest']) {
+                    $recordToDelete = $record;
+                    break;
+                }
+            } elseif ($recordType === 'MX') {
+                $mxRecord = $record->getRdata();
+                if ($mxRecord->getExchange() === $recordRdata['exchange'] &&
+                    $mxRecord->getPreference() == $recordRdata['preference']) {
+                    $recordToDelete = $record;
+                    break;
+                }
+            } else {
+                // Handle other record types
+                if (strtolower($record->getRdata()->toText()) === strtolower($recordRdata)) {
+                    $recordToDelete = $record;
+                    break;
+                }
+            }
         }
     }
 
