@@ -184,6 +184,12 @@ function reloadBIND9() {
     if ($return_var !== 0) {
         throw new Exception("Failed to reload BIND9: " . implode("\n", $output));
     }
+
+    // Notify slave servers
+    exec('sudo rndc notify', $notify_output, $notify_return_var);
+    if ($notify_return_var !== 0) {
+        throw new Exception("Failed to notify slave servers: " . implode("\n", $notify_output));
+    }
 }
 
 // Authentication Middleware
