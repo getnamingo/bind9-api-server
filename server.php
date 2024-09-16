@@ -26,7 +26,7 @@ $users = [
 $jwt_secret = $_ENV['JWT_SECRET'];
 
 /**
- * Load and save zone files (unchanged from previous implementation).
+ * Load and save zone files.
  *
  * @param Badcow\DNS\Zone $zone
  * @throws Exception if unable to save the zone file
