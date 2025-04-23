@@ -283,7 +283,7 @@ function updateSerialNumber($pdo, $domainName) {
  * Update the SOA record in the zone by updating its serial number.
  */
 function updateZoneSoa($zone, $zoneName, $pdo) {
-    $newSerial = updateSerialNumber($pdo, $zoneName);
+    $newSerial = updateSerialNumberFromZone($zone);
     foreach ($zone->getResourceRecords() as $record) {
         if (strtoupper($record->getType()) === 'SOA') {
             $soaRdata = $record->getRdata();
@@ -298,4 +298,29 @@ function updateZoneSoa($zone, $zoneName, $pdo) {
 function isValidDomainName($domain) {
     return preg_match('/^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$/', $domain) || // Regular domain
            preg_match('/^xn--[a-zA-Z0-9-]+$/', $domain); // IDN (Punycode)
+}
+
+function updateSerialNumberFromZone($zone) {
+    $currentDate = date('Ymd');
+    $newSerial = null;
+
+    foreach ($zone->getResourceRecords() as $record) {
+        if (strtoupper($record->getType()) === 'SOA') {
+            $currentSerial = $record->getRdata()->getSerial();
+            $serialDate = substr($currentSerial, 0, 8);
+            $changeNumber = (int)substr($currentSerial, 8, 2);
+
+            if ($serialDate === $currentDate) {
+                $changeNumber++;
+                $changeNumber = str_pad($changeNumber, 2, '0', STR_PAD_LEFT);
+            } else {
+                $changeNumber = '01';
+            }
+
+            $newSerial = $currentDate . $changeNumber;
+            break;
+        }
+    }
+
+    return $newSerial;
 }

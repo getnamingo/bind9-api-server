@@ -404,8 +404,17 @@ function handleAddRecord($zoneName, $request, $pdo) {
                     }
                     break;
                 case 'MX':
-                    if ($existingRecord->getRdata()->getExchange() === $rdata['exchange'] &&
-                        $existingRecord->getRdata()->getPreference() == $rdata['preference']) {
+                    if (is_string($rdata)) {
+                        [$preference, $exchange] = explode(' ', $rdata, 2);
+                        $rdata_n = [
+                            'preference' => (int)$preference,
+                            'exchange' => rtrim($exchange, '.') . '.',
+                        ];
+                    } else {
+                        $rdata_n = $rdata;
+                    }
+                    if ($existingRecord->getRdata()->getExchange() === $rdata_n['exchange'] &&
+                        $existingRecord->getRdata()->getPreference() == $rdata_n['preference']) {
                         return [400, ['error' => 'Record already exists']];
                     }
                     break;
@@ -467,8 +476,14 @@ function handleAddRecord($zoneName, $request, $pdo) {
         }
         $methodName = $factoryMethods[$normalizedType];
         if ($type === 'MX') {
-            $preference = $rdata['preference'];
-            $exchange = $rdata['exchange'];
+            if (is_string($rdata)) {
+                [$preference, $exchange] = explode(' ', $rdata, 2);
+                $preference = (int)$preference;
+            } else {
+                $preference = $rdata['preference'] ?? 10;
+                $exchange = $rdata['exchange'] ?? '';
+            }
+            $exchange = rtrim($exchange, '.') . '.';
             $rdataInstance = \Badcow\DNS\Rdata\Factory::MX($preference, $exchange);
         } else if ($type === 'DS') {
             $keytag = $rdata['keytag'];
@@ -521,7 +536,8 @@ function handleUpdateRecord($zoneName, $request, $pdo) {
 
     $currentName = trim($body['current_name'] ?? '');
     $currentType = strtoupper(trim($body['current_type'] ?? ''));
-    $currentRdata = trim($body['current_rdata'] ?? '');
+    $currentRdataRaw = $body['current_rdata'] ?? '';
+    $currentRdata = is_string($currentRdataRaw) ? trim($currentRdataRaw) : $currentRdataRaw;
 
     $newName = trim($body['new_name'] ?? $currentName);
     $newTtl = isset($body['new_ttl']) ? intval($body['new_ttl']) : 3600;
@@ -530,6 +546,26 @@ function handleUpdateRecord($zoneName, $request, $pdo) {
 
     if (!$currentName || !$currentType || !$currentRdata) {
         return [400, ['error' => 'Current record name, type, and rdata are required for identification']];
+    }
+    if ($currentType === 'MX' && rtrim($currentName, '.') === rtrim($zoneName, '.')) {
+        $currentName = '@';
+    }
+
+    if ($currentType === 'MX') {
+        if (is_array($currentRdata)) {
+            $pref = $currentRdata['preference'] ?? 10;
+            $exch = rtrim($currentRdata['exchange'] ?? '', '.') . '.';
+        } elseif (is_string($currentRdata)) {
+            $parts = preg_split('/\s+/', trim($currentRdata), 2);
+            if (count($parts) === 2 && is_numeric($parts[0])) {
+                $pref = (int)$parts[0];
+                $exch = rtrim($parts[1], '.') . '.';
+            } else {
+                $pref = 10;
+                $exch = rtrim($currentRdata, '.') . '.';
+            }
+        }
+        $currentRdata = "{$pref} {$exch}";
     }
 
     $recordToUpdate = null;
@@ -574,8 +610,20 @@ function handleUpdateRecord($zoneName, $request, $pdo) {
             }
             $methodName = $factoryMethods[$normalizedType];
             if ($currentType === 'MX') {
-                $preference = $newRdata['preference'];
-                $exchange = $newRdata['exchange'];
+                if (is_array($newRdata)) {
+                    $preference = $newRdata['preference'] ?? 10;
+                    $exchange = rtrim($newRdata['exchange'] ?? '', '.') . '.';
+                    } else {
+                        $parts = preg_split('/\s+/', trim($newRdata), 2);
+                        if (count($parts) === 2 && is_numeric($parts[0])) {
+                            $preference = (int)$parts[0];
+                            $exchange = rtrim($parts[1], '.') . '.';
+                        } else {
+                            // Fallback
+                            $preference = 10;
+                            $exchange = rtrim($newRdata, '.') . '.';
+                        }
+                    }
                 $rdataInstance = \Badcow\DNS\Rdata\Factory::MX($preference, $exchange);
             } else if ($currentType === 'DS') {
                 $keytag = $newRdata['keytag'];
@@ -634,6 +682,9 @@ function handleDeleteRecord($zoneName, $request, $pdo) {
 
     $recordName = trim($body['name'] ?? '');
     $recordType = strtoupper(trim($body['type'] ?? ''));
+    if ($recordType === 'MX' && rtrim($recordName, '.') === rtrim($zoneName, '.')) {
+        $recordName = '@';
+    }
     if ($recordType === 'DS' || $recordType === 'MX') {
         $recordRdata = $body['rdata'] ?? '';
     } else {
@@ -642,6 +693,26 @@ function handleDeleteRecord($zoneName, $request, $pdo) {
 
     if (!$recordName || !$recordType || !$recordRdata) {
         return [400, ['error' => 'Record name, type, and rdata are required for identification']];
+    }
+    
+    if ($recordType === 'MX') {
+        if (is_string($recordRdata)) {
+            $parts = preg_split('/\s+/', trim($recordRdata), 2);
+            if (count($parts) === 2 && is_numeric($parts[0])) {
+                $recordRdata = [
+                    'preference' => (int)$parts[0],
+                    'exchange' => rtrim($parts[1], '.') . '.',
+                ];
+            } else {
+                $recordRdata = [
+                    'preference' => 10,
+                    'exchange' => rtrim($recordRdata, '.') . '.',
+                ];
+            }
+        } elseif (is_array($recordRdata)) {
+            $recordRdata['preference'] = (int)($recordRdata['preference'] ?? 10);
+            $recordRdata['exchange'] = rtrim($recordRdata['exchange'] ?? '', '.') . '.';
+        }
     }
 
     $recordToDelete = null;
@@ -738,7 +809,8 @@ $server->on("request", function (Request $request, Response $response) use ($poo
 
         $remoteAddr = $request->server['remote_addr'];
         if (!isIpWhitelisted($remoteAddr, $pdo)) {
-            if (($_ENV['RATELY'] == true) && ($rateLimiter->isRateLimited('bind9_api', $remoteAddr, $_ENV['RATE_LIMIT'], $_ENV['RATE_PERIOD']))) {
+            if (filter_var($_ENV['RATELY'] ?? false, FILTER_VALIDATE_BOOLEAN) && 
+    $rateLimiter->isRateLimited('bind9_api', $remoteAddr, $_ENV['RATE_LIMIT'], $_ENV['RATE_PERIOD'])) {
                 $log->error('Rate limit exceeded for ' . $remoteAddr);
                 $response->header('Content-Type', 'application/json');
                 $response->status(429);
@@ -864,7 +936,13 @@ $server->on("request", function (Request $request, Response $response) use ($poo
             $response->header('Content-Type', 'application/json');
             $response->end(json_encode(['Database error:' => $e->getMessage()]));
         } catch (Throwable $e) {
-            $log->error('Error: ' . $e->getMessage());
+            $log->error(sprintf(
+                "Exception: %s in %s on line %d\nTrace:\n%s",
+                $e->getMessage(),
+                $e->getFile(),
+                $e->getLine(),
+                $e->getTraceAsString()
+            ));
             $response->status(500);
             $response->header('Content-Type', 'application/json');
             $response->end(json_encode(['Error:' => $e->getMessage()]));
