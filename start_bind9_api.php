@@ -13,7 +13,6 @@ use Badcow\DNS\Classes;
 use Badcow\DNS\Zone;
 use Badcow\DNS\Rdata\Factory;
 use Badcow\DNS\ResourceRecord;
-use Badcow\DNS\AlignedBuilder;
 use Namingo\Rately\Rately;
 
 // Load environment variables
@@ -70,7 +69,7 @@ function handleLogin($request, $pdo) {
             VALUES (:user_id, :token, :ip_address, :user_agent, NOW(), DATE_ADD(NOW(), INTERVAL 1 HOUR))
         ');
 
-        $ipAddress = filter_var($request->server['remote_addr'], FILTER_VALIDATE_IP);
+        $ipAddress = filter_var($request->server['remote_addr'] ?? '', FILTER_VALIDATE_IP) ?: null;
         $userAgent = substr($request->header['user-agent'] ?? '', 0, 255);
 
         $stmt->execute([
@@ -404,17 +403,18 @@ function handleAddRecord($zoneName, $request, $pdo) {
                     }
                     break;
                 case 'MX':
-                    if (is_string($rdata)) {
-                        [$preference, $exchange] = explode(' ', $rdata, 2);
-                        $rdata_n = [
-                            'preference' => (int)$preference,
-                            'exchange' => rtrim($exchange, '.') . '.',
-                        ];
-                    } else {
-                        $rdata_n = $rdata;
-                    }
-                    if ($existingRecord->getRdata()->getExchange() === $rdata_n['exchange'] &&
-                        $existingRecord->getRdata()->getPreference() == $rdata_n['preference']) {
+                    $rdata_n = normalizeMxRdata($rdata);
+
+                    $existingMx = $existingRecord->getRdata();
+                    $existingNorm = normalizeMxRdata([
+                        'preference' => $existingMx->getPreference(),
+                        'exchange'   => $existingMx->getExchange(),
+                    ]);
+
+                    if (
+                        $existingNorm['preference'] == $rdata_n['preference'] &&
+                        $existingNorm['exchange'] === $rdata_n['exchange']
+                    ) {
                         return [400, ['error' => 'Record already exists']];
                     }
                     break;
@@ -432,15 +432,24 @@ function handleAddRecord($zoneName, $request, $pdo) {
                     break;
                 case 'SPF':
                 case 'TXT':
-                    if ($existingRecord->getRdata()->getText() === $rdata) {
+                    $existingTextNorm = normalizeSpfRdata($existingRecord->getRdata()->getText());
+                    $newTextNorm      = normalizeSpfRdata($rdata);
+
+                    if ($existingTextNorm === $newTextNorm) {
                         return [400, ['error' => 'Record already exists']];
                     }
                     break;
                 case 'DS':
-                    if ($existingRecord->getRdata()->getKeyTag() == $rdata['keytag'] &&
-                        $existingRecord->getRdata()->getAlgorithm() == $rdata['algorithm'] &&
-                        $existingRecord->getRdata()->getDigestType() == $rdata['digestType'] &&
-                        $existingRecord->getRdata()->getDigest() === $rdata['digest']) {
+                    $ds = $existingRecord->getRdata();
+                    $existingDigestHex = strtolower(bin2hex($ds->getDigest()));
+                    $newDigestHex      = strtolower(is_array($rdata) ? $rdata['digest'] : $rdata);
+
+                    if (
+                        $ds->getKeyTag() == $rdata['keytag'] &&
+                        $ds->getAlgorithm() == $rdata['algorithm'] &&
+                        $ds->getDigestType() == $rdata['digestType'] &&
+                        $existingDigestHex === $newDigestHex
+                    ) {
                         return [400, ['error' => 'Record already exists']];
                     }
                     break;
@@ -476,15 +485,8 @@ function handleAddRecord($zoneName, $request, $pdo) {
         }
         $methodName = $factoryMethods[$normalizedType];
         if ($type === 'MX') {
-            if (is_string($rdata)) {
-                [$preference, $exchange] = explode(' ', $rdata, 2);
-                $preference = (int)$preference;
-            } else {
-                $preference = $rdata['preference'] ?? 10;
-                $exchange = $rdata['exchange'] ?? '';
-            }
-            $exchange = rtrim($exchange, '.') . '.';
-            $rdataInstance = \Badcow\DNS\Rdata\Factory::MX($preference, $exchange);
+            $mx = normalizeMxRdata($rdata);
+            $rdataInstance = \Badcow\DNS\Rdata\Factory::MX($mx['preference'], $mx['exchange']);
         } else if ($type === 'DS') {
             $keytag = $rdata['keytag'];
             $algorithm = $rdata['algorithm'];
@@ -540,8 +542,10 @@ function handleUpdateRecord($zoneName, $request, $pdo) {
     $currentRdata = is_string($currentRdataRaw) ? trim($currentRdataRaw) : $currentRdataRaw;
 
     $newName = trim($body['new_name'] ?? $currentName);
-    $newTtl = isset($body['new_ttl']) ? intval($body['new_ttl']) : 3600;
-    $newRdata = trim($body['new_rdata'] ?? $currentRdata);
+    $newTtl  = isset($body['new_ttl']) ? intval($body['new_ttl']) : 3600;
+
+    $newRdataRaw = $body['new_rdata'] ?? $currentRdata;
+    $newRdata    = is_string($newRdataRaw) ? trim($newRdataRaw) : $newRdataRaw;
     $newComment = trim($body['new_comment'] ?? '');
 
     if (!$currentName || !$currentType || !$currentRdata) {
@@ -551,32 +555,47 @@ function handleUpdateRecord($zoneName, $request, $pdo) {
         $currentName = '@';
     }
 
+    $currentMxNorm = null;
     if ($currentType === 'MX') {
-        if (is_array($currentRdata)) {
-            $pref = $currentRdata['preference'] ?? 10;
-            $exch = rtrim($currentRdata['exchange'] ?? '', '.') . '.';
-        } elseif (is_string($currentRdata)) {
-            $parts = preg_split('/\s+/', trim($currentRdata), 2);
-            if (count($parts) === 2 && is_numeric($parts[0])) {
-                $pref = (int)$parts[0];
-                $exch = rtrim($parts[1], '.') . '.';
-            } else {
-                $pref = 10;
-                $exch = rtrim($currentRdata, '.') . '.';
-            }
-        }
-        $currentRdata = "{$pref} {$exch}";
+        $currentMxNorm = normalizeMxRdata($currentRdata);
     }
 
     $recordToUpdate = null;
     foreach ($zone->getResourceRecords() as $record) {
         if (
             strtolower($record->getName()) === strtolower($currentName) &&
-            strtoupper($record->getType()) === strtoupper($currentType) &&
-            strtolower($record->getRdata()->toText()) === strtolower($currentRdata)
+            strtoupper($record->getType()) === strtoupper($currentType)
         ) {
-            $recordToUpdate = $record;
-            break;
+            if ($currentType === 'MX') {
+                $mx = $record->getRdata();
+                $existingNorm = normalizeMxRdata([
+                    'preference' => $mx->getPreference(),
+                    'exchange'   => $mx->getExchange(),
+                ]);
+
+                if (
+                    $existingNorm['preference'] == $currentMxNorm['preference'] &&
+                    $existingNorm['exchange'] === $currentMxNorm['exchange']
+                ) {
+                    $recordToUpdate = $record;
+                    break;
+                }
+            } else {
+                if (in_array($currentType, ['SPF', 'TXT'], true)) {
+                    $existingNorm = normalizeSpfRdata($record->getRdata()->toText());
+                    $currentNorm  = normalizeSpfRdata($currentRdata);
+
+                    if ($existingNorm === $currentNorm) {
+                        $recordToUpdate = $record;
+                        break;
+                    }
+                } else {
+                    if (strtolower($record->getRdata()->toText()) === strtolower(is_string($currentRdata) ? $currentRdata : '')) {
+                        $recordToUpdate = $record;
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -610,21 +629,8 @@ function handleUpdateRecord($zoneName, $request, $pdo) {
             }
             $methodName = $factoryMethods[$normalizedType];
             if ($currentType === 'MX') {
-                if (is_array($newRdata)) {
-                    $preference = $newRdata['preference'] ?? 10;
-                    $exchange = rtrim($newRdata['exchange'] ?? '', '.') . '.';
-                    } else {
-                        $parts = preg_split('/\s+/', trim($newRdata), 2);
-                        if (count($parts) === 2 && is_numeric($parts[0])) {
-                            $preference = (int)$parts[0];
-                            $exchange = rtrim($parts[1], '.') . '.';
-                        } else {
-                            // Fallback
-                            $preference = 10;
-                            $exchange = rtrim($newRdata, '.') . '.';
-                        }
-                    }
-                $rdataInstance = \Badcow\DNS\Rdata\Factory::MX($preference, $exchange);
+                $mx = normalizeMxRdata($newRdata);
+                $rdataInstance = \Badcow\DNS\Rdata\Factory::MX($mx['preference'], $mx['exchange']);
             } else if ($currentType === 'DS') {
                 $keytag = $newRdata['keytag'];
                 $algorithm = $newRdata['algorithm'];
@@ -694,25 +700,9 @@ function handleDeleteRecord($zoneName, $request, $pdo) {
     if (!$recordName || !$recordType || !$recordRdata) {
         return [400, ['error' => 'Record name, type, and rdata are required for identification']];
     }
-    
+
     if ($recordType === 'MX') {
-        if (is_string($recordRdata)) {
-            $parts = preg_split('/\s+/', trim($recordRdata), 2);
-            if (count($parts) === 2 && is_numeric($parts[0])) {
-                $recordRdata = [
-                    'preference' => (int)$parts[0],
-                    'exchange' => rtrim($parts[1], '.') . '.',
-                ];
-            } else {
-                $recordRdata = [
-                    'preference' => 10,
-                    'exchange' => rtrim($recordRdata, '.') . '.',
-                ];
-            }
-        } elseif (is_array($recordRdata)) {
-            $recordRdata['preference'] = (int)($recordRdata['preference'] ?? 10);
-            $recordRdata['exchange'] = rtrim($recordRdata['exchange'] ?? '', '.') . '.';
-        }
+        $recordRdata = normalizeMxRdata($recordRdata);
     }
 
     $recordToDelete = null;
@@ -723,24 +713,47 @@ function handleDeleteRecord($zoneName, $request, $pdo) {
         ) {
             if ($recordType === 'DS') {
                 $dsRecord = $record->getRdata();
-                if ($dsRecord->getKeyTag() == $recordRdata['keytag'] &&
+
+                $existingDigestHex = strtolower(bin2hex($dsRecord->getDigest()));
+                $requestedDigestHex = strtolower($recordRdata['digest']);
+
+                if (
+                    $dsRecord->getKeyTag() == $recordRdata['keytag'] &&
                     $dsRecord->getAlgorithm() == $recordRdata['algorithm'] &&
                     $dsRecord->getDigestType() == $recordRdata['digestType'] &&
-                    $dsRecord->getDigest() === $recordRdata['digest']) {
+                    $existingDigestHex === $requestedDigestHex
+                ) {
                     $recordToDelete = $record;
                     break;
                 }
             } elseif ($recordType === 'MX') {
                 $mxRecord = $record->getRdata();
-                if ($mxRecord->getExchange() === $recordRdata['exchange'] &&
-                    $mxRecord->getPreference() == $recordRdata['preference']) {
+                $existingNorm = normalizeMxRdata([
+                    'preference' => $mxRecord->getPreference(),
+                    'exchange'   => $mxRecord->getExchange(),
+                ]);
+
+                if (
+                    $existingNorm['preference'] == $recordRdata['preference'] &&
+                    $existingNorm['exchange'] === $recordRdata['exchange']
+                ) {
                     $recordToDelete = $record;
                     break;
                 }
             } else {
-                if (strtolower($record->getRdata()->toText()) === strtolower($recordRdata)) {
-                    $recordToDelete = $record;
-                    break;
+                if (in_array($recordType, ['SPF', 'TXT'], true)) {
+                    $existingNorm  = normalizeSpfRdata($record->getRdata()->toText());
+                    $requestedNorm = normalizeSpfRdata($recordRdata);
+
+                    if ($existingNorm === $requestedNorm) {
+                        $recordToDelete = $record;
+                        break;
+                    }
+                } else {
+                    if (strtolower($record->getRdata()->toText()) === strtolower($recordRdata)) {
+                        $recordToDelete = $record;
+                        break;
+                    }
                 }
             }
         }
@@ -781,7 +794,8 @@ $server->set([
     'heartbeat_idle_time' => 600,
     'package_max_length' => 2 * 1024 * 1024,
     'reload_async' => true,
-    'http_compression' => true
+    'http_compression' => true,
+    'enable_coroutine' => true,
 ]);
 
 $rateLimiter = new Rately();
@@ -789,167 +803,156 @@ $log->info('BIND9 api server started at http://127.0.0.1:7650');
 
 // Set up a periodic cleanup of expired sessions every 60 seconds.
 Swoole\Timer::tick(60000, function() use ($pool, $log) {
-    $pdo = $pool->get();
-    try {
-        $stmt = $pdo->prepare("DELETE FROM sessions WHERE expires_at < NOW()");
-        $stmt->execute();
-        $removed = $stmt->rowCount();
-        $log->info("Expired sessions cleanup executed, removed {$removed} sessions.");
-    } catch (Exception $e) {
-        $log->error("Failed to clean up expired sessions: " . $e->getMessage());
-    }
-    $pool->put($pdo);
-});
-
-$server->on("request", function (Request $request, Response $response) use ($pool, $log, $rateLimiter) {
-    Swoole\Coroutine\go(function () use ($request, $response, $pool, $log, $rateLimiter) {
-        $response->header("Content-Type", "application/json");
-        
+    Swoole\Coroutine\create(function() use ($pool, $log) {
         $pdo = $pool->get();
-
-        $remoteAddr = $request->server['remote_addr'];
-        if (!isIpWhitelisted($remoteAddr, $pdo)) {
-            if (filter_var($_ENV['RATELY'] ?? false, FILTER_VALIDATE_BOOLEAN) && 
-    $rateLimiter->isRateLimited('bind9_api', $remoteAddr, $_ENV['RATE_LIMIT'], $_ENV['RATE_PERIOD'])) {
-                $log->error('Rate limit exceeded for ' . $remoteAddr);
-                $response->header('Content-Type', 'application/json');
-                $response->status(429);
-                $response->end(json_encode(['error' => 'Rate limit exceeded. Please try again later.']));
-                $pool->put($pdo);
-                return;
-            }
-        }
-
         try {
-            $path = $request->server['request_uri'];
-            $method = $request->server['request_method'];
-
-            if ($path === '/login' && $method === 'POST') {
-                list($status, $body) = handleLogin($request, $pdo);
-                $response->status($status);
-                $response->end(json_encode($body));
-                $pool->put($pdo);
-                return;
-            }
-
-            $user = authenticate($request, $pdo, $log);
-            if (!$user) {
-                $response->status(401);
-                $response->end(json_encode(['error' => 'Unauthorized']));
-                $pool->put($pdo);
-                return;
-            }
-
-            // Zones Management
-            if ($path === '/zones') {
-                if ($method === 'GET') {
-                    list($status, $body) = handleGetZones();
-                    $response->status($status);
-                    $response->end(json_encode($body));
-                    $pool->put($pdo);
-                    return;
-                } elseif ($method === 'POST') {
-                    list($status, $body) = handleAddZone($request, $pdo);
-                    $response->status($status);
-                    $response->end(json_encode($body));
-                    $pool->put($pdo);
-                    return;
-                }
-            }
-
-            // Slave Zone Management
-            if ($path === '/slave-zones') {
-                if ($method === 'GET') {
-                    list($status, $body) = handleGetSlaveZones();
-                    $response->status($status);
-                    $response->end(json_encode($body));
-                    return;
-                } elseif ($method === 'POST') {
-                    list($status, $body) = handleAddSlaveZone($request);
-                    $response->status($status);
-                    $response->end(json_encode($body));
-                    return;
-                }
-            }
-
-            // Delete Zone: DELETE /zones/{zone}
-            if (preg_match('#^/zones/([^/]+)$#', $path, $matches) && $method === 'DELETE') {
-                $zoneName = $matches[1];
-                list($status, $body) = handleDeleteZone($zoneName);
-                $response->status($status);
-                $response->end(json_encode($body));
-                $pool->put($pdo);
-                return;
-            }
-
-            // Delete Slave Zone: DELETE /slave-zones/{zone}
-            if (preg_match('#^/slave-zones/([^/]+)$#', $path, $matches) && $method === 'DELETE') {
-                $zoneName = $matches[1];
-                list($status, $body) = handleDeleteSlaveZone($zoneName);
-                $response->status($status);
-                $response->end(json_encode($body));
-                return;
-            }
-
-            // Records Management
-            if (preg_match('#^/zones/([^/]+)/records$#', $path, $matches)) {
-                $zoneName = $matches[1];
-                if ($method === 'GET') {
-                    list($status, $body) = handleGetRecords($zoneName);
-                    $response->status($status);
-                    $response->end(json_encode($body));
-                    $pool->put($pdo);
-                    return;
-                } elseif ($method === 'POST') {
-                    list($status, $body) = handleAddRecord($zoneName, $request, $pdo);
-                    $response->status($status);
-                    $response->end(json_encode($body));
-                    $pool->put($pdo);
-                    return;
-                }
-            }
-
-            if (preg_match('#^/zones/([^/]+)/records/([^/]+)$#', $path, $matches)) {
-                $zoneName = $matches[1];
-                // $recordId is currently unused.
-                if ($method === 'PUT') {
-                    list($status, $body) = handleUpdateRecord($zoneName, $request, $pdo);
-                    $response->status($status);
-                    $response->end(json_encode($body));
-                    $pool->put($pdo);
-                    return;
-                } elseif ($method === 'DELETE') {
-                    list($status, $body) = handleDeleteRecord($zoneName, $request, $pdo);
-                    $response->status($status);
-                    $response->end(json_encode($body));
-                    $pool->put($pdo);
-                    return;
-                }
-            }
-
-            $log->info('Path Not Found');
-            $response->status(404);
-            $response->end(json_encode(['error' => 'Path Not Found']));
-        } catch (PDOException $e) {
-            $log->error('Database error: ' . $e->getMessage());
-            $response->status(500);
-            $response->header('Content-Type', 'application/json');
-            $response->end(json_encode(['Database error:' => $e->getMessage()]));
-        } catch (Throwable $e) {
-            $log->error(sprintf(
-                "Exception: %s in %s on line %d\nTrace:\n%s",
-                $e->getMessage(),
-                $e->getFile(),
-                $e->getLine(),
-                $e->getTraceAsString()
-            ));
-            $response->status(500);
-            $response->header('Content-Type', 'application/json');
-            $response->end(json_encode(['Error:' => $e->getMessage()]));
+            $stmt = $pdo->prepare("DELETE FROM sessions WHERE expires_at < NOW()");
+            $stmt->execute();
+            $removed = $stmt->rowCount();
+            $log->info("Expired sessions cleanup executed, removed {$removed} sessions.");
+        } catch (Exception $e) {
+            $log->error("Failed to clean up expired sessions: " . $e->getMessage());
         } finally {
             $pool->put($pdo);
         }
     });
+});
+
+$server->on("request", function (Request $request, Response $response) use ($pool, $log, $rateLimiter) {
+    $response->header("Content-Type", "application/json");
+
+    $pdo = $pool->get();
+
+    try {
+        $remoteAddr = $request->server['remote_addr'] ?? '';
+        if (!isIpWhitelisted($remoteAddr, $pdo)) {
+            if (filter_var($_ENV['RATELY'] ?? false, FILTER_VALIDATE_BOOLEAN) && $rateLimiter->isRateLimited('bind9_api', $remoteAddr, $_ENV['RATE_LIMIT'], $_ENV['RATE_PERIOD'])) {
+                $log->error('Rate limit exceeded for ' . $remoteAddr);
+                $response->header('Content-Type', 'application/json');
+                $response->status(429);
+                $response->end(json_encode(['error' => 'Rate limit exceeded. Please try again later.']));
+                return;
+            }
+        }
+
+        $path = $request->server['request_uri'];
+        $method = $request->server['request_method'];
+
+        if ($path === '/login' && $method === 'POST') {
+            list($status, $body) = handleLogin($request, $pdo);
+            $response->status($status);
+            $response->end(json_encode($body));
+            return;
+        }
+
+        $user = authenticate($request, $pdo, $log);
+        if (!$user) {
+            $response->status(401);
+            $response->end(json_encode(['error' => 'Unauthorized']));
+            return;
+        }
+
+        // Zones Management
+        if ($path === '/zones') {
+            if ($method === 'GET') {
+                list($status, $body) = handleGetZones();
+                $response->status($status);
+                $response->end(json_encode($body));
+                return;
+            } elseif ($method === 'POST') {
+                list($status, $body) = handleAddZone($request, $pdo);
+                $response->status($status);
+                $response->end(json_encode($body));
+                return;
+            }
+        }
+
+        // Slave Zone Management
+        if ($path === '/slave-zones') {
+            if ($method === 'GET') {
+                list($status, $body) = handleGetSlaveZones();
+                $response->status($status);
+                $response->end(json_encode($body));
+                return;
+            } elseif ($method === 'POST') {
+                list($status, $body) = handleAddSlaveZone($request);
+                $response->status($status);
+                $response->end(json_encode($body));
+                return;
+            }
+        }
+
+        // Delete Zone: DELETE /zones/{zone}
+        if (preg_match('#^/zones/([^/]+)$#', $path, $matches) && $method === 'DELETE') {
+            $zoneName = $matches[1];
+            list($status, $body) = handleDeleteZone($zoneName);
+            $response->status($status);
+            $response->end(json_encode($body));
+            return;
+        }
+
+        // Delete Slave Zone: DELETE /slave-zones/{zone}
+        if (preg_match('#^/slave-zones/([^/]+)$#', $path, $matches) && $method === 'DELETE') {
+            $zoneName = $matches[1];
+            list($status, $body) = handleDeleteSlaveZone($zoneName);
+            $response->status($status);
+            $response->end(json_encode($body));
+            return;
+        }
+
+        // Records Management
+        if (preg_match('#^/zones/([^/]+)/records$#', $path, $matches)) {
+            $zoneName = $matches[1];
+            if ($method === 'GET') {
+                list($status, $body) = handleGetRecords($zoneName);
+                $response->status($status);
+                $response->end(json_encode($body));
+                return;
+            } elseif ($method === 'POST') {
+                list($status, $body) = handleAddRecord($zoneName, $request, $pdo);
+                $response->status($status);
+                $response->end(json_encode($body));
+                return;
+            }
+        }
+
+        if (preg_match('#^/zones/([^/]+)/records/([^/]+)$#', $path, $matches)) {
+            $zoneName = $matches[1];
+            if ($method === 'PUT') {
+                list($status, $body) = handleUpdateRecord($zoneName, $request, $pdo);
+                $response->status($status);
+                $response->end(json_encode($body));
+                return;
+            } elseif ($method === 'DELETE') {
+                list($status, $body) = handleDeleteRecord($zoneName, $request, $pdo);
+                $response->status($status);
+                $response->end(json_encode($body));
+                return;
+            }
+        }
+
+        $log->info('Path Not Found');
+        $response->status(404);
+        $response->end(json_encode(['error' => 'Path Not Found']));
+    } catch (PDOException $e) {
+        $log->error('Database error: ' . $e->getMessage());
+        $response->status(500);
+        $response->header('Content-Type', 'application/json');
+        $response->end(json_encode(['Database error:' => $e->getMessage()]));
+    } catch (Throwable $e) {
+        $log->error(sprintf(
+            "Exception: %s in %s on line %d\nTrace:\n%s",
+            $e->getMessage(),
+            $e->getFile(),
+            $e->getLine(),
+            $e->getTraceAsString()
+        ));
+        $response->status(500);
+        $response->header('Content-Type', 'application/json');
+        $response->end(json_encode(['Error:' => $e->getMessage()]));
+    } finally {
+        $pool->put($pdo);
+    }
 });
 
 $server->start();

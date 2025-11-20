@@ -10,7 +10,11 @@ The **BIND9 API Server** provides a RESTful interface to manage BIND9 DNS zones 
 
 For detailed installation steps, please refer to [install.md](install.md).
 
-## API Client
+### SQLite Version
+
+This version uses MariaDB/MySQL. For SQLite support, please see [bind9-api-server-sqlite](https://github.com/getnamingo/bind9-api-server-sqlite).
+
+### API Client
 
 Please check our [API Client](https://github.com/getnamingo/bind9-api-client).
 

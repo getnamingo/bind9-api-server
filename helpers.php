@@ -1,6 +1,6 @@
 <?php
 
-require_once 'vendor/autoload.php';
+require __DIR__ . '/vendor/autoload.php';
 
 use Monolog\Logger;
 use Monolog\Handler\StreamHandler;
@@ -52,33 +52,16 @@ function isIpWhitelisted($ip, $pdo) {
     return $count > 0;
 }
 
-function updatePermittedIPs($pool, $permittedIPsTable) {
-    $pdo = $pool->get();
-    $query = "SELECT ip_address FROM whitelist";
-    $stmt = $pdo->query($query);
-    $permittedIPs = $stmt->fetchAll(PDO::FETCH_COLUMN, 0);
-    $pool->put($pdo);
-
-    foreach ($permittedIPsTable as $key => $value) {
-        $permittedIPsTable->del($key);
-    }
-
-    foreach ($permittedIPs as $ip) {
-        $permittedIPsTable->set($ip, ['ip_address' => $ip]);
-    }
-}
-
 /**
  * Save the zone file.
  */
 function saveZone($zone) {
     $zoneDir = $_ENV['BIND9_ZONE_DIR'];
     $zoneName = rtrim($zone->getName(), '.');
-    if (!preg_match('/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/', $zoneName)) {
+    if (!isValidDomainName($zoneName)) {
         throw new Exception("Invalid zone name");
     }
     $zoneFile = "$zoneDir/" . $zoneName . ".zone";
-    $realPath = realpath($zoneFile);
     $builder = new AlignedBuilder();
     if (file_put_contents($zoneFile, $builder->build($zone), LOCK_EX) === false) {
         throw new Exception("Failed to save zone file at $zoneFile");
@@ -173,6 +156,9 @@ function addSlaveZoneToConfig(string $zoneName, string $masterIp): void {
  */
 function loadZone($zoneName) {
     $zoneDir = $_ENV['BIND9_ZONE_DIR'];
+    if (!isValidDomainName($zoneName)) {
+        throw new Exception("Invalid zone name");
+    }
     $zoneFile = "$zoneDir/$zoneName.zone";
     if (!file_exists($zoneFile)) {
         throw new Exception("Zone file not found.");
@@ -323,4 +309,53 @@ function updateSerialNumberFromZone($zone) {
     }
 
     return $newSerial;
+}
+
+function normalizeMxRdata($rdata): array {
+    if (is_string($rdata)) {
+        $parts = preg_split('/\s+/', trim($rdata), 2);
+        if (count($parts) === 2 && is_numeric($parts[0])) {
+            return [
+                'preference' => (int) $parts[0],
+                'exchange'   => rtrim($parts[1], '.') . '.',
+            ];
+        }
+        // fallback
+        return [
+            'preference' => 10,
+            'exchange'   => rtrim($rdata, '.') . '.',
+        ];
+    }
+
+    return [
+        'preference' => (int)($rdata['preference'] ?? 10),
+        'exchange'   => rtrim($rdata['exchange'] ?? '', '.') . '.',
+    ];
+}
+
+function normalizeSpfRdata($rdata): string
+{
+    // Allow array or string input
+    if (is_array($rdata)) {
+        $rdata = implode(' ', $rdata);
+    }
+
+    $rdata = trim((string)$rdata);
+
+    if ($rdata === '') {
+        return '';
+    }
+
+    // Strip surrounding quotes if present
+    $first = $rdata[0];
+    $last  = $rdata[strlen($rdata) - 1];
+    if (($first === '"' && $last === '"') || ($first === "'" && $last === "'")) {
+        $rdata = substr($rdata, 1, -1);
+    }
+
+    // Collapse internal whitespace
+    $rdata = preg_replace('/\s+/', ' ', $rdata);
+
+    // SPF is case-insensitive; normalize to lowercase for comparison
+    return strtolower($rdata);
 }
