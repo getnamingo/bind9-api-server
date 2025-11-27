@@ -7,41 +7,41 @@
 ```bash
 apt install -y curl software-properties-common ufw
 add-apt-repository ppa:ondrej/php
-apt update
 apt install -y bzip2 composer git net-tools php8.3 php8.3-bz2 php8.3-cli php8.3-common php8.3-curl php8.3-fpm php8.3-gd php8.3-gmp php8.3-imagick php8.3-intl php8.3-mbstring php8.3-opcache php8.3-readline php8.3-swoole php8.3-xml unzip wget
 ```
 
-### Configure PHP:
+### Configure PHP Settings:
 
-Edit the PHP Configuration Files:
+1. Open the PHP-FPM configuration file:
 
 ```bash
-nano /etc/php/8.3/cli/php.ini
 nano /etc/php/8.3/fpm/php.ini
 ```
 
-Locate or add these lines in ```php.ini```, also replace ```example.com``` with your registrar domain name:
+Add or uncomment the following session security settings:
 
-```bash
-opcache.enable=1
-opcache.enable_cli=1
-opcache.jit_buffer_size=100M
-opcache.jit=1255
-
+```ini
 session.cookie_secure = 1
 session.cookie_httponly = 1
 session.cookie_samesite = "Strict"
-session.cookie_domain =
 ```
 
-In ```/etc/php/8.3/mods-available/opcache.ini``` make one additional change:
+2. Open the OPCache configuration file:
 
 ```bash
+nano /etc/php/8.3/mods-available/opcache.ini
+```
+
+Verify or add the following OPCache and JIT settings:
+
+```ini
+opcache.enable=1
+opcache.enable_cli=1
 opcache.jit=1255
 opcache.jit_buffer_size=100M
 ```
 
-After configuring PHP, restart the service to apply changes:
+3. Restart PHP-FPM to apply the changes:
 
 ```bash
 systemctl restart php8.3-fpm
@@ -100,13 +100,12 @@ curl -o /etc/apt/keyrings/mariadb-keyring.pgp 'https://mariadb.org/mariadb_relea
 Place the following in ```/etc/apt/sources.list.d/mariadb.sources```:
 
 ```bash
-# MariaDB 10.11 repository list - created 2023-12-02 22:16 UTC
+# MariaDB 11 Rolling repository list - created 2025-04-08 06:39 UTC
 # https://mariadb.org/download/
 X-Repolib-Name: MariaDB
 Types: deb
-# deb.mariadb.org is a dynamic mirror if your preferred mirror goes offline. See https://mariadb.org/mirrorbits/ for details.
-# URIs: https://deb.mariadb.org/10.11/ubuntu
-URIs: https://mirrors.chroot.ro/mariadb/repo/10.11/ubuntu
+# URIs: https://deb.mariadb.org/11/ubuntu
+URIs: https://distrohub.kyiv.ua/mariadb/repo/11.rolling/ubuntu
 Suites: jammy
 Components: main main/debug
 Signed-By: /etc/apt/keyrings/mariadb-keyring.pgp
@@ -114,12 +113,18 @@ Signed-By: /etc/apt/keyrings/mariadb-keyring.pgp
 
 ### 3.2. Ubuntu 24.04
 
-Place the following in ```/etc/apt/sources.list.d/mariadb.list```:
+Place the following in ```/etc/apt/sources.list.d/mariadb.sources```:
 
 ```bash
-# MariaDB 11.4 repository list - created 2024-07-23 18:24 UTC
+# MariaDB 11 Rolling repository list - created 2025-04-08 06:40 UTC
 # https://mariadb.org/download/
-deb [signed-by=/etc/apt/keyrings/mariadb-keyring.pgp] https://fastmirror.pp.ua/mariadb/repo/11.4/ubuntu noble main
+X-Repolib-Name: MariaDB
+Types: deb
+# URIs: https://deb.mariadb.org/11/ubuntu
+URIs: https://distrohub.kyiv.ua/mariadb/repo/11.rolling/ubuntu
+Suites: noble
+Components: main main/debug
+Signed-By: /etc/apt/keyrings/mariadb-keyring.pgp
 ```
 
 ### 3.3. Debian 12
@@ -127,13 +132,12 @@ deb [signed-by=/etc/apt/keyrings/mariadb-keyring.pgp] https://fastmirror.pp.ua/m
 Place the following in ```/etc/apt/sources.list.d/mariadb.sources```:
 
 ```bash
-# MariaDB 10.11 repository list - created 2024-01-05 12:23 UTC
+# MariaDB 11 Rolling repository list - created 2025-04-08 06:40 UTC
 # https://mariadb.org/download/
 X-Repolib-Name: MariaDB
 Types: deb
-# deb.mariadb.org is a dynamic mirror if your preferred mirror goes offline. See https://mariadb.org/mirrorbits/ for details.
-# URIs: https://deb.mariadb.org/10.11/debian
-URIs: https://mirrors.chroot.ro/mariadb/repo/10.11/debian
+# URIs: https://deb.mariadb.org/11/ubuntu
+URIs: https://distrohub.kyiv.ua/mariadb/repo/11.rolling/debian
 Suites: bookworm
 Components: main
 Signed-By: /etc/apt/keyrings/mariadb-keyring.pgp
