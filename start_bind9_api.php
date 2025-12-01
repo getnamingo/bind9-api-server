@@ -376,12 +376,16 @@ function handleAddRecord($zoneName, $request, $pdo) {
     } catch (JsonException $e) {
         return [400, ['error' => 'Invalid JSON: ' . $e->getMessage()]];
     }
-    $name = $body['name'] ?? '';
+    $name = isset($body['name']) ? trim($body['name']) : '@';
     $type = strtoupper($body['type'] ?? '');
     $ttl = $body['ttl'] ?? 3600;
     $rdata = $body['rdata'] ?? '';
 
-    if (!$name || !$type || !$rdata) {
+    if ($name === '') {
+        $name = '@';
+    }
+
+    if (!$type || !$rdata) {
         return [400, ['error' => 'Missing required fields']];
     }
 
