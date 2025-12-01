@@ -801,23 +801,6 @@ $server->set([
 $rateLimiter = new Rately();
 $log->info('BIND9 api server started at http://127.0.0.1:7650');
 
-// Set up a periodic cleanup of expired sessions every 60 seconds.
-Swoole\Timer::tick(60000, function() use ($pool, $log) {
-    Swoole\Coroutine\create(function() use ($pool, $log) {
-        $pdo = $pool->get();
-        try {
-            $stmt = $pdo->prepare("DELETE FROM sessions WHERE expires_at < NOW()");
-            $stmt->execute();
-            $removed = $stmt->rowCount();
-            $log->info("Expired sessions cleanup executed, removed {$removed} sessions.");
-        } catch (Exception $e) {
-            $log->error("Failed to clean up expired sessions: " . $e->getMessage());
-        } finally {
-            $pool->put($pdo);
-        }
-    });
-});
-
 $server->on("request", function (Request $request, Response $response) use ($pool, $log, $rateLimiter) {
     $response->header("Content-Type", "application/json");
 
@@ -956,3 +939,17 @@ $server->on("request", function (Request $request, Response $response) use ($poo
 });
 
 $server->start();
+
+Swoole\Timer::tick(60000, function() use ($pool, $log) {
+    $pdo = $pool->get();
+    try {
+        $stmt = $pdo->prepare("DELETE FROM sessions WHERE expires_at < NOW()");
+        $stmt->execute();
+        $removed = $stmt->rowCount();
+        $log->info("Expired sessions cleanup executed, removed {$removed} sessions.");
+    } catch (Exception $e) {
+        $log->error("Failed to clean up expired sessions: " . $e->getMessage());
+    } finally {
+        $pool->put($pdo);
+    }
+});

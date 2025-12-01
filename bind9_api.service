@@ -11,8 +11,8 @@ ExecStart=/usr/bin/php /opt/bind9_api/start_bind9_api.php
 ExecReload=/bin/kill -HUP $MAINPID
 ExecStop=/bin/kill -INT $MAINPID
 WorkingDirectory=/opt/bind9_api
-StandardOutput=syslog
-StandardError=syslog
+StandardOutput=journal
+StandardError=journal
 SyslogIdentifier=bind9api
 
 [Install]

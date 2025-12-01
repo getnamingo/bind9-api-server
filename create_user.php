@@ -28,7 +28,7 @@ try {
         ':password' => $hashedPassword,
     ]);
 
-    echo "User '$username' created successfully.";
+    echo "User '$username' created successfully." . PHP_EOL;
 
 } catch (PDOException $e) {
     echo 'Database error: ' . $e->getMessage();

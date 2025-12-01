@@ -224,6 +224,8 @@ mv env-sample .env
 
 Edit the `.env` with the appropriate database details and preferences as required.
 
+Open `create_user.php`, set the username and password the API will use, run the script, then delete it after confirming it works.
+
 Copy `bind9_api.service` to `/etc/systemd/system/`. Change only User and Group lines to your user and group.
 
 ```bash
