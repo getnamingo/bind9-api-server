@@ -181,6 +181,8 @@ chown -R www-data:www-data /etc/bind/zones
 chmod -R 640 /etc/bind/zones
 ```
 
+(use `chown -R root:bind /etc/bind/zones` if running as root)
+
 ## 6. Edit the sudoers file:
 
 ```bash
