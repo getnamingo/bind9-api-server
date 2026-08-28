@@ -1,331 +1,410 @@
-# Installation Guide (Ubuntu 22.04/Ubuntu 24.04/Debian 12)
+# Installation and client guide
 
-**NB! The API server must be installed on a server where is running BIND9 as master or slave DNS.**
+This is the single installation guide for both database backends and the bundled PHP client. Commands assume root privileges; prefix them with `sudo` when working from an administrator account.
 
-## 1. Install the required packages:
+The API must run on the BIND 9 host because it writes zone files, updates one included BIND configuration file, validates both, and calls `rndc`. It should listen only on loopback and be exposed remotely through HTTPS.
 
-```bash
-apt install -y curl software-properties-common ufw
-add-apt-repository ppa:ondrej/php
-apt install -y bzip2 composer git net-tools php8.3 php8.3-bz2 php8.3-cli php8.3-common php8.3-curl php8.3-fpm php8.3-gd php8.3-gmp php8.3-imagick php8.3-intl php8.3-mbstring php8.3-opcache php8.3-readline php8.3-swoole php8.3-xml unzip wget
-```
+Use it only for static file-backed primary zones. Do not mix these file rewrites with dynamic DNS updates or `.jnl`-managed zones.
 
-### Configure PHP Settings:
+## 1. Install packages
 
-1. Open the PHP-FPM configuration file:
+PHP 8.2 or newer is supported. The examples use PHP 8.3; if your maintained repository supplies another supported PHP version, change the versioned package names consistently.
 
-```bash
-nano /etc/php/8.3/fpm/php.ini
-```
+### Ubuntu
 
-Add or uncomment the following session security settings:
-
-```ini
-session.cookie_secure = 1
-session.cookie_httponly = 1
-session.cookie_samesite = "Strict"
-```
-
-2. Open the OPCache configuration file:
+The following uses the same maintained PHP package source as the original project:
 
 ```bash
-nano /etc/php/8.3/mods-available/opcache.ini
-```
-
-Verify or add the following OPCache and JIT settings:
-
-```ini
-opcache.enable=1
-opcache.enable_cli=1
-opcache.jit=1255
-opcache.jit_buffer_size=100M
-```
-
-3. Restart PHP-FPM to apply the changes:
-
-```bash
-systemctl restart php8.3-fpm
-```
-
-## 2. Install and Configure Caddy:
-
-1. Execute the following commands:
-
-```bash
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' -o caddy-stable.gpg.key
-gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg caddy-stable.gpg.key
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
 apt update
-apt install -y caddy
+apt install -y software-properties-common
+add-apt-repository -y ppa:ondrej/php
+apt update
+apt install -y \
+  acl bind9 bind9utils composer git sqlite3 unzip \
+  php8.3-cli php8.3-curl php8.3-mbstring php8.3-mysql \
+  php8.3-opcache php8.3-sqlite3 php8.3-swoole php8.3-xml
 ```
 
-2. Edit `/etc/caddy/Caddyfile` and place the following content:
+### Debian
+
+Use Debian's packages when they contain a recent Swoole, or configure the maintained [Sury PHP repository](https://packages.sury.org/php/) and install the same versioned PHP packages shown above:
 
 ```bash
+apt update
+apt install -y \
+  acl bind9 bind9utils composer git sqlite3 unzip \
+  php-cli php-curl php-mbstring php-mysql php-opcache \
+  php-sqlite3 php-swoole php-xml
+```
+
+### RHEL, AlmaLinux or Rocky Linux 9
+
+Enable EPEL and Remi, then select a supported PHP stream. Remi currently names the Swoole 6 package `php-pecl-swoole6`.
+
+```bash
+dnf install -y epel-release
+dnf install -y https://rpms.remirepo.net/enterprise/remi-release-9.rpm
+dnf module reset -y php
+dnf module enable -y php:remi-8.3
+dnf install -y \
+  bind bind-utils composer git policycoreutils-python-utils sqlite unzip \
+  php-cli php-common php-mbstring php-mysqlnd php-opcache php-pdo \
+  php-pecl-swoole6 php-process php-sqlite3 php-xml
+```
+
+Red Hat's BIND packages and SELinux guidance are documented in the [RHEL 9 BIND guide](https://docs.redhat.com/en/documentation/red_hat_enterprise_linux/9/html/managing_networking_infrastructure_services/assembly_setting-up-and-configuring-a-bind-dns-server_networking-infrastructure-services).
+
+Verify the runtime before continuing:
+
+```bash
+php --version
+php --ri swoole
+php -m | grep -E 'PDO|pdo_mysql|pdo_sqlite|swoole'
+named-checkconf -v
+```
+
+Install only the PDO driver you intend to use if you prefer a smaller system. Keeping both makes later database switching easier.
+
+## 2. Create the service account and install the code
+
+Install either a unified release archive or the unified repository checkout at `/opt/bind9_api`. For a release archive whose top-level directory is `bind9_api`:
+
+```bash
+unzip bind9-api-unified.zip -d /opt
+```
+
+After the unified changes are merged into the main server repository, a Git checkout is equivalent:
+
+```bash
+git clone https://github.com/getnamingo/bind9-api-server.git /opt/bind9_api
+```
+
+Then finish the installation:
+
+```bash
+useradd --system --home-dir /nonexistent --shell "$(command -v nologin)" bind9-api
+cd /opt/bind9_api
+composer install --no-dev --classmap-authoritative
+cp env-sample .env
+chown -R root:bind9-api /opt/bind9_api
+find /opt/bind9_api -type d -exec chmod 0750 {} +
+find /opt/bind9_api -type f -exec chmod 0640 {} +
+chmod 0750 /opt/bind9_api/create_user.php
+chmod 0640 /opt/bind9_api/.env
+install -d -o bind9-api -g bind9-api -m 0750 /var/lib/bind9-api
+install -d -o bind9-api -g bind9-api -m 0750 /var/log/plexdns
+```
+
+Composer executables under `vendor/bin` may need execute bits restored if you use them; the production server itself does not require them.
+
+Edit `/opt/bind9_api/.env`. At minimum, replace the example SOA email, nameservers, database credentials, and any distribution-specific BIND paths.
+
+Keep these production defaults unless your architecture requires otherwise:
+
+```dotenv
+DEBUG_MODE=false
+API_HOST=127.0.0.1
+API_PORT=7650
+WORKER_NUM=1
+RATELY=true
+SESSION_BIND_IP=true
+TRUSTED_PROXIES=127.0.0.1,::1
+```
+
+`WORKER_NUM=1` intentionally serializes low-volume zone-file mutations. Do not raise it unless you provide external per-zone locking.
+
+## 3. Grant narrowly scoped BIND access
+
+The API does not use `sudo` and must not run as root. It needs write access only to its BIND include file and zone directory, plus read access to the local RNDC key.
+
+### Ubuntu or Debian paths
+
+The main `/etc/bind/named.conf` already includes `/etc/bind/named.conf.local` on a standard installation. Keep that file root-owned and add a separate API-managed include:
+
+```bash
+usermod -aG bind bind9-api
+install -d -o bind9-api -g bind -m 2750 /etc/bind/zones
+touch /etc/bind/bind9-api.conf
+chown bind9-api:bind /etc/bind/bind9-api.conf
+chmod 0640 /etc/bind/bind9-api.conf
+grep -Fqx 'include "/etc/bind/bind9-api.conf";' /etc/bind/named.conf.local \
+  || printf '\ninclude "/etc/bind/bind9-api.conf";\n' >> /etc/bind/named.conf.local
+```
+
+Use these `.env` values:
+
+```dotenv
+BIND9_ZONE_DIR=/etc/bind/zones
+BIND9_CONF_FILE=/etc/bind/bind9-api.conf
+BIND9_MAIN_CONF=/etc/bind/named.conf
+BIND9_SLAVE_DIR=/var/cache/bind
+RNDC_BIN=/usr/sbin/rndc
+NAMED_CHECKCONF_BIN=/usr/sbin/named-checkconf
+NAMED_CHECKZONE_BIN=/usr/sbin/named-checkzone
+BIND9_VALIDATE=true
+```
+
+### Red Hat family paths and SELinux
+
+Create a dedicated include and zone directory:
+
+```bash
+usermod -aG named bind9-api
+install -d -o root -g named -m 0750 /etc/named
+touch /etc/named/bind9-api.conf
+chown bind9-api:named /etc/named/bind9-api.conf
+chmod 0640 /etc/named/bind9-api.conf
+install -d -o bind9-api -g named -m 2750 /var/named/bind9-api
+```
+
+Add this once, outside the `options` block, to `/etc/named.conf`:
+
+```bind
+include "/etc/named/bind9-api.conf";
+```
+
+Apply BIND SELinux labels:
+
+```bash
+semanage fcontext -a -t named_conf_t '/etc/named/bind9-api\.conf'
+semanage fcontext -a -t named_zone_t '/var/named/bind9-api(/.*)?'
+restorecon -RFv /etc/named/bind9-api.conf /var/named/bind9-api
+```
+
+Use these `.env` values:
+
+```dotenv
+BIND9_ZONE_DIR=/var/named/bind9-api
+BIND9_CONF_FILE=/etc/named/bind9-api.conf
+BIND9_MAIN_CONF=/etc/named.conf
+BIND9_SLAVE_DIR=/var/named/slaves
+RNDC_BIN=/usr/sbin/rndc
+NAMED_CHECKCONF_BIN=/usr/sbin/named-checkconf
+NAMED_CHECKZONE_BIN=/usr/sbin/named-checkzone
+BIND9_VALIDATE=true
+```
+
+### Verify BIND access
+
+Restart BIND so group membership and configuration changes are active, then test as the API account:
+
+```bash
+named-checkconf
+systemctl restart bind9 2>/dev/null || systemctl restart named
+runuser -u bind9-api -- /usr/sbin/rndc status
+```
+
+If RNDC reports a key permission error, find the key referenced by your `rndc.conf`/`named.conf` and make it group-readable by `bind` on Debian-family systems or `named` on Red Hat-family systems. Do not make the key world-readable.
+
+## 4. Select and initialize a database
+
+Choose exactly one backend.
+
+### Option A: SQLite
+
+Set:
+
+```dotenv
+DB_TYPE=sqlite
+DB_DATABASE=/var/lib/bind9-api/bind9_api.sqlite
+DB_BUSY_TIMEOUT=5000
+```
+
+Initialize it:
+
+```bash
+runuser -u bind9-api -- sqlite3 /var/lib/bind9-api/bind9_api.sqlite < /opt/bind9_api/database/sqlite.sql
+chown bind9-api:bind9-api /var/lib/bind9-api/bind9_api.sqlite
+chmod 0640 /var/lib/bind9-api/bind9_api.sqlite
+```
+
+WAL mode and foreign-key enforcement are enabled by both the schema and the application.
+
+### Option B: MariaDB/MySQL
+
+Install a local MariaDB/MySQL server if one is not already available. Then create a database and a loopback-only account from the database console:
+
+```sql
+CREATE DATABASE bind9_api CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE USER 'bind9_api'@'127.0.0.1' IDENTIFIED BY 'REPLACE_WITH_A_LONG_RANDOM_PASSWORD';
+GRANT SELECT, INSERT, UPDATE, DELETE ON bind9_api.* TO 'bind9_api'@'127.0.0.1';
+FLUSH PRIVILEGES;
+```
+
+Import the schema:
+
+```bash
+mysql --database=bind9_api < /opt/bind9_api/database/mysql.sql
+```
+
+Set matching values:
+
+```dotenv
+DB_TYPE=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_DATABASE=bind9_api
+DB_USERNAME=bind9_api
+DB_PASSWORD=REPLACE_WITH_A_LONG_RANDOM_PASSWORD
+```
+
+MariaDB uses the `mysql` PDO driver name; do not set `DB_TYPE=mariadb` in new configurations, although the code accepts it as an alias.
+
+## 5. Create the first API user
+
+The script reads the password from standard input so it is neither committed to the source nor placed in a command-line argument:
+
+```bash
+read -rsp 'API password: ' API_USER_PASSWORD
+printf '%s' "$API_USER_PASSWORD" | runuser -u bind9-api -- php /opt/bind9_api/create_user.php admin
+unset API_USER_PASSWORD
+```
+
+The password must be 12-1024 bytes. Passwords are stored with Argon2id where available, falling back to PHP's secure default password algorithm.
+
+## 6. Install and start the systemd service
+
+```bash
+cp /opt/bind9_api/bind9_api.service /etc/systemd/system/bind9_api.service
+systemctl daemon-reload
+systemctl enable --now bind9_api.service
+systemctl status bind9_api.service
+```
+
+Confirm it is listening only on loopback:
+
+```bash
+ss -lntp | grep ':7650'
+journalctl -u bind9_api.service -n 50 --no-pager
+```
+
+Test login locally:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  --request POST http://127.0.0.1:7650/login \
+  --header 'Content-Type: application/json' \
+  --data '{"username":"admin","password":"YOUR_PASSWORD"}'
+```
+
+## 7. Put HTTPS in front of the API
+
+Install Caddy using its [official distribution instructions](https://caddyserver.com/docs/install), point a DNS name to the server, and use this Caddyfile:
+
+```caddyfile
 api.example.com {
-    bind YOUR_IPV4_ADDRESS YOUR_IPV6_ADDRESS
-    reverse_proxy localhost:7650
-    encode gzip
-    file_server
-    tls your-email@example.com
-    header -Server
-    header * {
+    reverse_proxy 127.0.0.1:7650
+    encode zstd gzip
+
+    header {
+        -Server
+        Cache-Control "no-store"
+        Content-Security-Policy "default-src 'none'; frame-ancestors 'none'"
         Referrer-Policy "no-referrer"
-        Strict-Transport-Security max-age=31536000;
-        X-Content-Type-Options nosniff
-        X-Frame-Options DENY
-        X-XSS-Protection "1; mode=block"
-        Content-Security-Policy "default-src 'none'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; img-src https:; font-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'none'; form-action 'self'; worker-src 'none'; frame-src 'none';"
-        Feature-Policy "accelerometer 'none'; autoplay 'none'; camera 'none'; encrypted-media 'none'; fullscreen 'self'; geolocation 'none'; gyroscope 'none'; magnetometer 'none'; microphone 'none'; midi 'none'; payment 'none'; picture-in-picture 'self'; usb 'none';"
-        Permissions-Policy: accelerometer=(), autoplay=(), camera=(), encrypted-media=(), fullscreen=(self), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), midi=(), payment=(), picture-in-picture=(self), usb=();
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
     }
 }
 ```
 
-Activate and reload Caddy:
+Validate and reload:
 
 ```bash
-systemctl enable caddy
-systemctl restart caddy
+caddy validate --config /etc/caddy/Caddyfile
+systemctl reload caddy
 ```
 
-## 3. Install MariaDB:
+Allow only ports 80/443 at the host or provider firewall. Do not expose port 7650. If Caddy runs on another host, bind the API only to a private address, restrict the firewall to that proxy, and set `TRUSTED_PROXIES` to the proxy's exact IP/CIDR.
 
-```bash
-curl -o /etc/apt/keyrings/mariadb-keyring.pgp 'https://mariadb.org/mariadb_release_signing_key.pgp'
-```
+## 8. Use the bundled PHP client
 
-### 3.1. Ubuntu 22.04
+The server's Composer install already installs Guzzle and autoloads `Namingo\Bind9Api\ApiClient`; no second repository is needed.
 
-Place the following in ```/etc/apt/sources.list.d/mariadb.sources```:
-
-```bash
-# MariaDB 11 Rolling repository list - created 2025-04-08 06:39 UTC
-# https://mariadb.org/download/
-X-Repolib-Name: MariaDB
-Types: deb
-# URIs: https://deb.mariadb.org/11/ubuntu
-URIs: https://distrohub.kyiv.ua/mariadb/repo/11.rolling/ubuntu
-Suites: jammy
-Components: main main/debug
-Signed-By: /etc/apt/keyrings/mariadb-keyring.pgp
-```
-
-### 3.2. Ubuntu 24.04
-
-Place the following in ```/etc/apt/sources.list.d/mariadb.sources```:
-
-```bash
-# MariaDB 11 Rolling repository list - created 2025-04-08 06:40 UTC
-# https://mariadb.org/download/
-X-Repolib-Name: MariaDB
-Types: deb
-# URIs: https://deb.mariadb.org/11/ubuntu
-URIs: https://distrohub.kyiv.ua/mariadb/repo/11.rolling/ubuntu
-Suites: noble
-Components: main main/debug
-Signed-By: /etc/apt/keyrings/mariadb-keyring.pgp
-```
-
-### 3.3. Debian 12
-
-Place the following in ```/etc/apt/sources.list.d/mariadb.sources```:
-
-```bash
-# MariaDB 11 Rolling repository list - created 2025-04-08 06:40 UTC
-# https://mariadb.org/download/
-X-Repolib-Name: MariaDB
-Types: deb
-# URIs: https://deb.mariadb.org/11/ubuntu
-URIs: https://distrohub.kyiv.ua/mariadb/repo/11.rolling/debian
-Suites: bookworm
-Components: main
-Signed-By: /etc/apt/keyrings/mariadb-keyring.pgp
-```
-
-## 4. Configure MariaDB:
-
-1. Execute the following commands:
-
-```bash
-apt update
-apt install -y mariadb-client mariadb-server php8.3-mysql
-mysql_secure_installation
-```
-
-2. Access MariaDB:
-
-```bash
-mysql -u root -p
-```
-
-3. Execute the following queries:
-
-```bash
-CREATE DATABASE bind9_api;
-CREATE USER 'bind9_api_user'@'localhost' IDENTIFIED BY 'RANDOM_STRONG_PASSWORD';
-GRANT ALL PRIVILEGES ON bind9_api.* TO 'bind9_api_user'@'localhost';
-FLUSH PRIVILEGES;
-```
-
-Replace `bind9_api_user` with your desired username and `RANDOM_STRONG_PASSWORD` with a secure password of your choice.
-
-[Tune your MariaDB](https://github.com/major/MySQLTuner-perl)
-
-## 5. Set File Permissions:
-
-```bash
-chown www-data:www-data /etc/bind/named.conf.local
-chmod 640 /etc/bind/named.conf.local
-chown -R www-data:www-data /etc/bind/zones
-chmod -R 640 /etc/bind/zones
-```
-
-(use `chown -R root:bind /etc/bind/zones` if running as root)
-
-## 6. Edit the sudoers file:
-
-```bash
-sudo visudo
-```
-
-Add the following line (replace www-data with the appropriate user):
-
-```bash
-www-data ALL=NOPASSWD: /usr/sbin/rndc reload
-```
-
-## 7. Download BIND9 API:
-
-First, clone the project repository into the `/opt/bind9_api` directory:
-
-```bash
-git clone https://github.com/getnamingo/bind9-api-server /opt/bind9_api
-```
-
-Next, create the directory for logs. This directory will be used to store log files generated by the API server:
-
-```bash
-mkdir -p /var/log/namingo
-chown -R www-data:www-data /var/log/namingo
-```
-
-## 8. Import Database:
-
-```bash
-mysql -u bind9_api_user -pRANDOM_STRONG_PASSWORD < /opt/bind9_api/database/bind9_api.sql
-```
-
-## 9. Setup API Service:
+Run the included example:
 
 ```bash
 cd /opt/bind9_api
-composer install
-mv env-sample .env
+export BIND9_API_URL='https://api.example.com'
+export BIND9_API_USERNAME='admin'
+read -rsp 'API password: ' BIND9_API_PASSWORD
+export BIND9_API_PASSWORD
+php examples/client_example.php
+unset BIND9_API_PASSWORD
 ```
 
-Edit the `.env` with the appropriate database details and preferences as required.
+Minimal application code:
 
-Open `create_user.php`, set the username and password the API will use, run the script, then delete it after confirming it works.
+```php
+<?php
 
-Copy `bind9_api.service` to `/etc/systemd/system/`. Change only User and Group lines to your user and group.
+require '/opt/bind9_api/vendor/autoload.php';
+
+use Namingo\Bind9Api\ApiClient;
+
+$api = new ApiClient('https://api.example.com');
+$api->login('admin', getenv('BIND9_API_PASSWORD'));
+
+$api->addZone('example.com');
+$api->addRecord('example.com', [
+    'name' => 'www',
+    'type' => 'A',
+    'ttl' => 3600,
+    'rdata' => '192.0.2.10',
+]);
+
+print_r($api->getRecords('example.com'));
+```
+
+The client URL-encodes zone path segments, validates JSON responses, catches Guzzle transport errors correctly, and refuses authenticated API calls until `login()` succeeds.
+
+## 9. Upgrade from either old server
+
+1. Back up the BIND include file, zone directory, `.env`, and database.
+2. Stop the old API service.
+3. Deploy the unified code and run `composer install --no-dev --classmap-authoritative`.
+4. Copy new variables from `env-sample` into the existing `.env`; select its current database using `DB_TYPE`. Keep the old `BIND9_CONF_FILE` value if that file already contains API-managed zone blocks, or move those blocks into the new dedicated include before changing the path.
+5. For an existing MariaDB/MySQL database, run:
+
+   ```bash
+   mysql --database=bind9_api < database/migrate-mysql-ipv6.sql
+   ```
+
+   This converts stored IP columns to IPv4/IPv6-safe text and makes usernames case-sensitive. SQLite needs no destructive migration; re-run its idempotent schema to add the session-expiry index if it is missing:
+
+   ```bash
+   runuser -u bind9-api -- sqlite3 /var/lib/bind9-api/bind9_api.sqlite \
+     < database/sqlite.sql
+   ```
+
+6. Install the new systemd unit and apply the non-root BIND permissions described above.
+7. Start the service and test login plus one read operation before attempting changes.
+
+Existing one-hour sessions intentionally stop working after this upgrade because new deployments store only token hashes. Log in again. API users, passwords, zones and records remain intact.
+
+## 10. Validation and troubleshooting
+
+Run the project checks after installation or an upgrade:
 
 ```bash
-systemctl daemon-reload
-systemctl start bind9_api.service
-systemctl enable bind9_api.service
+cd /opt/bind9_api
+composer validate --strict
+find . -path ./vendor -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
+composer test
 ```
 
-After that you can manage BIND9 API via systemctl as any other service. Finally, you will need to restart Caddy server:
+Useful diagnostics:
 
 ```bash
-systemctl restart caddy
+journalctl -u bind9_api.service -f
+runuser -u bind9-api -- /usr/sbin/named-checkconf /etc/bind/named.conf
+runuser -u bind9-api -- /usr/sbin/rndc status
 ```
 
-## (Optional) 10. Install BIND9:
-
-If needed, here is how to install BIND9.
-
-### 10.1. Setting your hostname
+On Red Hat-family systems, inspect SELinux denials rather than disabling SELinux:
 
 ```bash
-hostnamectl set-hostname your.hostname.com
+ausearch -m AVC -ts recent
 ```
 
-Edit the file and add your IP and hostname as in the example below:
-
-```bash
-nano /etc/hosts
-```
-
-```bash
-192.0.2.10   your.hostname.com bind
-```
-
-### 10.2. Install BIND9
-
-Install BIND9 and related utilities:
-
-```bash
-apt install bind9 bind9utils bind9-doc dnsutils -y
-```
-
-It's good practice to back up the original BIND9 configuration files before making changes.
-
-```bash
-cp /etc/bind/named.conf.options /etc/bind/named.conf.options.backup
-cp /etc/bind/named.conf.local /etc/bind/named.conf.local.backup
-```
-
-Edit the `named.conf.options` file to set up general options.
-
-```bash
-nano /etc/bind/named.conf.options
-```
-
-Replace its contents with the following:
-
-```bash
-options {
-    directory "/var/cache/bind";
-
-    // Allow queries from any IP
-    allow-query { any; };
-
-    // Listen on all interfaces
-    listen-on { any; };
-    listen-on-v6 { any; };
-
-    // Enable DNSSEC validation
-    dnssec-validation auto;
-
-    auth-nxdomain no;    # conform to RFC1035
-    listen-on port 53 { any; };
-};
-```
-
-Create the zones directory if it doesn't exist:
-
-```bash
-mkdir -p /etc/bind/zones
-```
-
-Before restarting BIND9, verify the configuration:
-
-```bash
-sudo named-checkconf
-```
-
-If you are using UFW (Uncomplicated Firewall), execute the following commands:
-
-```bash
-ufw allow 53/tcp
-ufw allow 53/udp
-```
-
-Enable BIND9 to start on boot and start the service:
-
-```bash
-systemctl enable bind9
-systemctl start bind9
-```
+Common causes of startup failure are a missing database schema, an unwritable SQLite directory, incorrect MySQL credentials, an unreadable RNDC key, a BIND path that does not match `.env`, or a PHP CLI configuration that has not loaded Swoole/PDO.

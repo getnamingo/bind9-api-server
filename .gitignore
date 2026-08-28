@@ -1,0 +1,8 @@
+/.env
+/vendor/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+*.pid
+*.bak.*

@@ -1,37 +1,44 @@
 <?php
-require __DIR__ . '/vendor/autoload.php';
+
+declare(strict_types=1);
 
 use Dotenv\Dotenv;
+use Namingo\Bind9Api\Database;
 
-$dotenv = Dotenv::createImmutable(__DIR__);
-$dotenv->load();
+require __DIR__ . '/vendor/autoload.php';
+
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit;
+}
+
+$username = trim((string) ($argv[1] ?? ''));
+if (!preg_match('/^[A-Za-z0-9_.@-]{3,50}$/', $username)) {
+    fwrite(STDERR, "Usage: printf '%s' 'a-long-password' | php create_user.php USERNAME\n");
+    fwrite(STDERR, "USERNAME must be 3-50 characters: letters, digits, _, ., @ or -.\n");
+    exit(2);
+}
+
+$password = rtrim((string) stream_get_contents(STDIN), "\r\n");
+if (strlen($password) < 12 || strlen($password) > 1024) {
+    fwrite(STDERR, "Read a password of 12-1024 bytes from standard input.\n");
+    exit(2);
+}
 
 try {
-    $dsn = "{$_ENV['DB_TYPE']}:host={$_ENV['DB_HOST']};port={$_ENV['DB_PORT']};dbname={$_ENV['DB_DATABASE']}";
-    $pdo = new PDO($dsn, $_ENV['DB_USERNAME'], $_ENV['DB_PASSWORD'], [
-        PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-        PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-    ]);
+    Dotenv::createImmutable(__DIR__)->load();
+    $pdo = (new Database($_ENV))->connect();
+    $algorithm = defined('PASSWORD_ARGON2ID') ? PASSWORD_ARGON2ID : PASSWORD_DEFAULT;
+    $hash = password_hash($password, $algorithm);
+    if ($hash === false) {
+        throw new RuntimeException('Unable to hash the password.');
+    }
 
-    $username = 'testuser';
-    $password = 'securepassword';
+    $statement = $pdo->prepare('INSERT INTO users (username, password) VALUES (:username, :password)');
+    $statement->execute(['username' => $username, 'password' => $hash]);
 
-    $hashedPassword = password_hash($password, PASSWORD_ARGON2ID, [
-        'memory_cost' => 1<<17,    // 128 MB
-        'time_cost'   => 4,        // Number of iterations
-        'threads'     => 2         // Parallelism (CPU cores)
-    ]);
-
-    $stmt = $pdo->prepare('INSERT INTO users (username, password) VALUES (:username, :password)');
-    $stmt->execute([
-        ':username' => $username,
-        ':password' => $hashedPassword,
-    ]);
-
-    echo "User '$username' created successfully." . PHP_EOL;
-
-} catch (PDOException $e) {
-    echo 'Database error: ' . $e->getMessage();
-} catch (Exception $e) {
-    echo 'Error: ' . $e->getMessage();
+    fwrite(STDOUT, "User '{$username}' created successfully.\n");
+} catch (Throwable $exception) {
+    fwrite(STDERR, 'Unable to create user: ' . $exception->getMessage() . PHP_EOL);
+    exit(1);
 }

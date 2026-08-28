@@ -1,5 +1,4 @@
--- MariaDB/MySQL schema retained at the historical path for compatibility.
--- Import this only after selecting the target database (see install.md).
+-- MariaDB/MySQL schema. Import after selecting the target database.
 
 SET NAMES utf8mb4;
 

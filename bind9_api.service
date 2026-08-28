@@ -1,19 +1,41 @@
 [Unit]
 Description=BIND9 API Server
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=simple
-User=root
-Group=root
-Restart=on-failure
-ExecStart=/usr/bin/php /opt/bind9_api/start_bind9_api.php
-ExecReload=/bin/kill -HUP $MAINPID
-ExecStop=/bin/kill -INT $MAINPID
+User=bind9-api
+Group=bind9-api
 WorkingDirectory=/opt/bind9_api
+ExecStart=/usr/bin/php /opt/bind9_api/start_bind9_api.php
+Restart=on-failure
+RestartSec=3
+RuntimeDirectory=bind9-api
+LogsDirectory=plexdns
+StateDirectory=bind9-api
+StateDirectoryMode=0750
+UMask=0027
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=bind9api
+
+# The API writes only its database/logs and the configured BIND include/zone paths.
+NoNewPrivileges=true
+PrivateDevices=true
+PrivateTmp=true
+ProtectControlGroups=true
+ProtectHome=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectSystem=strict
+ReadWritePaths=-/etc/bind/bind9-api.conf -/etc/bind/named.conf.local -/etc/bind/zones -/etc/named/bind9-api.conf -/var/named/bind9-api -/var/lib/bind9-api -/var/log/plexdns -/run/bind9-api
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
 
 [Install]
 WantedBy=multi-user.target
