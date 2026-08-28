@@ -1,23 +1,20 @@
 # BIND9 API Server
 
-The BIND9 API Server provides an authenticated REST interface for managing BIND primary and secondary zones and their records. This unified edition supports either SQLite or MariaDB/MySQL from the same codebase and includes the PHP client that was previously maintained separately.
+[![StandWithUkraine](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/badges/StandWithUkraine.svg)](https://github.com/vshymanskyy/StandWithUkraine/blob/main/docs/README.md)
 
-The HTTP API and existing payload shapes remain compatible with:
+[![SWUbanner](https://raw.githubusercontent.com/vshymanskyy/StandWithUkraine/main/banner2-direct.svg)](https://github.com/vshymanskyy/StandWithUkraine/blob/main/docs/README.md)
 
-- `getnamingo/bind9-api-server`
-- `getnamingo/bind9-api-server-sqlite`
-- `getnamingo/bind9-api-client`
+The BIND9 API Server provides an authenticated REST interface for managing BIND primary and secondary zones and their records. It supports SQLite and MariaDB/MySQL and includes a bundled PHP client with a usage example.
 
 ## Included
 
-- SQLite and MariaDB/MySQL selected with `DB_TYPE`
+- SQLite and MariaDB/MySQL support
 - Primary and secondary zone management
 - A, AAAA, CNAME, MX, NS, PTR, SOA, TXT, SPF and DS record handling
 - Bearer-token authentication with hashed server-side tokens
 - IPv4/IPv6-aware rate limiting and proxy handling
 - Atomic zone writes plus `named-checkzone` and `named-checkconf` validation
 - A bundled Guzzle client in [`src/ApiClient.php`](src/ApiClient.php)
-- A hardened, non-root systemd unit
 
 ## Requirements
 
@@ -28,7 +25,7 @@ The HTTP API and existing payload shapes remain compatible with:
 - `rndc`, `named-checkconf` and `named-checkzone`
 - A TLS reverse proxy such as Caddy for remote access
 
-Follow the single [installation and client guide](install.md) for Ubuntu, Debian, Red Hat Enterprise Linux, AlmaLinux and Rocky Linux.
+Follow the [installation guide](install.md) for Ubuntu, Debian, Red Hat Enterprise Linux, AlmaLinux and Rocky Linux.
 
 ## Database selection
 
@@ -131,10 +128,26 @@ find . -path ./vendor -prune -o -name '*.php' -print0 | xargs -0 -n1 php -l
 composer test
 ```
 
-## Support and license
+## Support
 
-- Email: [help@namingo.org](mailto:help@namingo.org)
-- Discord: [Namingo community](https://discord.gg/97R9VCrWgc)
-- Issues: use the repository's GitHub Issues page
+Your feedback and inquiries are invaluable to Namingo's evolutionary journey. If you need support, have questions, or want to contribute your thoughts:
 
-Licensed under the [MIT License](LICENSE).
+- **Email**: Feel free to reach out directly at [help@namingo.org](mailto:help@namingo.org).
+
+- **Discord**: Or chat with us on our [Discord](https://discord.gg/97R9VCrWgc) channel.
+  
+- **GitHub Issues**: For bug reports or feature requests, please use the [Issues](https://github.com/getnamingo/bind9-api/issues) section of our GitHub repository.
+
+We appreciate your involvement and patience as BIND9 API Server continues to grow and adapt.
+
+## Support This Project
+
+If you find BIND9 API Server useful, consider donating:
+
+- [Donate via Stripe](https://donate.stripe.com/7sI2aI4jV3Offn28ww)
+- BTC: `bc1q9jhxjlnzv0x4wzxfp8xzc6w289ewggtds54uqa`
+- ETH: `0x330c1b148368EE4B8756B176f1766d52132f0Ea8`
+
+## Licensing
+
+BIND9 API Server is licensed under the MIT License.

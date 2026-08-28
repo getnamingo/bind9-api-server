@@ -1,6 +1,6 @@
-# Installation and client guide
+# Installation guide
 
-This is the single installation guide for both database backends and the bundled PHP client. Commands assume root privileges; prefix them with `sudo` when working from an administrator account.
+Commands assume root privileges; prefix them with `sudo` when working from an administrator account.
 
 The API must run on the BIND 9 host because it writes zone files, updates one included BIND configuration file, validates both, and calls `rndc`. It should listen only on loopback and be exposed remotely through HTTPS.
 
@@ -8,11 +8,7 @@ Use it only for static file-backed primary zones. Do not mix these file rewrites
 
 ## 1. Install packages
 
-PHP 8.2 or newer is supported. The examples use PHP 8.3; if your maintained repository supplies another supported PHP version, change the versioned package names consistently.
-
 ### Ubuntu
-
-The following uses the same maintained PHP package source as the original project:
 
 ```bash
 apt update
@@ -66,14 +62,6 @@ named-checkconf -v
 Install only the PDO driver you intend to use if you prefer a smaller system. Keeping both makes later database switching easier.
 
 ## 2. Create the service account and install the code
-
-Install either a unified release archive or the unified repository checkout at `/opt/bind9_api`. For a release archive whose top-level directory is `bind9_api`:
-
-```bash
-unzip bind9-api-unified.zip -d /opt
-```
-
-After the unified changes are merged into the main server repository, a Git checkout is equivalent:
 
 ```bash
 git clone https://github.com/getnamingo/bind9-api-server.git /opt/bind9_api
@@ -259,8 +247,6 @@ read -rsp 'API password: ' API_USER_PASSWORD
 printf '%s' "$API_USER_PASSWORD" | runuser -u bind9-api -- php /opt/bind9_api/create_user.php admin
 unset API_USER_PASSWORD
 ```
-
-The password must be 12-1024 bytes. Passwords are stored with Argon2id where available, falling back to PHP's secure default password algorithm.
 
 ## 6. Install and start the systemd service
 
